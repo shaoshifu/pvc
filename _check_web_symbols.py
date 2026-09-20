@@ -68,13 +68,49 @@ HINT_PREFIX = ("plat", "game", "_w", "_s", "_a", "_m", "_f", "_g", "Get", "Set",
                "IsWindow")
 
 
-def obj_symbols(path):
-    """返回 (未定义集合, 已定义集合)"""
-    out = subprocess.run(["nm", path], capture_output=True, text=True).stdout
+def find_nm():
+    """找一个可用的符号表工具。
+
+    ★ 这里必须容错，而且**找不到时要报 SKIP 而不是 FAIL**。
+      第一版直接 `subprocess.run(["nm", ...])`，在缺 nm 的环境里抛
+      FileNotFoundError → 脚本非零退出 → CI 步骤失败。
+      症状极具误导性：它看起来像"代码里有缺失符号"，
+      实际只是工具没装。**一个会因工具缺失而误报的检查，
+      最后一定会被人忽略 —— 那比没有检查更糟。**
+    """
+    for tool, args in (("nm", []), ("llvm-nm", []), ("objdump", ["-t"])):
+        try:
+            r = subprocess.run([tool] + args + ["--help"],
+                               capture_output=True, text=True)
+            if r.returncode == 0 or r.stdout or r.stderr:
+                return tool, args
+        except (FileNotFoundError, OSError):
+            continue
+    return None, None
+
+
+def obj_symbols(path, tool, args):
+    """返回 (未定义集合, 已定义集合)；工具不可用时返回 (None, None)"""
+    try:
+        out = subprocess.run([tool] + args + [path],
+                             capture_output=True, text=True).stdout
+    except (FileNotFoundError, OSError):
+        return None, None
+    if not out:
+        return None, None
+
     und, dfn = set(), set()
+    is_objdump = bool(args)          # objdump -t 的输出格式不同
     for ln in out.splitlines():
         parts = ln.split()
-        if len(parts) < 2:
+        if not parts:
+            continue
+        if is_objdump:
+            # objdump -t 形如：`0000000000000000         *UND*	0000000000000000 foo`
+            if "*UND*" in ln:
+                und.add(parts[-1])
+            elif len(parts) >= 6 and parts[-1] != "*UND*":
+                dfn.add(parts[-1])
             continue
         name = parts[-1]
         if len(parts) == 2 and parts[0] == "U":
@@ -92,6 +128,13 @@ def obj_symbols(path):
 def main():
     quiet = "--quiet" in sys.argv
     tmp = tempfile.mkdtemp(prefix="wsym_")
+
+    tool, targs = find_nm()
+    if tool is None:
+        print("  ⚠ 找不到 nm / objdump，**跳过**符号检查（不判为失败）")
+        print("    在 CI 上请确保装了 binutils：apt-get install -y binutils")
+        print("  SKIP")
+        return 0
 
     objs = []
     for src in ("pvz.c", "plat_web.c"):
@@ -113,7 +156,11 @@ def main():
 
     und, dfn = set(), set()
     for o in objs:
-        u, d = obj_symbols(o)
+        u, d = obj_symbols(o, tool, targs)
+        if u is None:
+            print("  ⚠ %s 符号表读取失败，**跳过**检查（不判为失败）" % os.path.basename(o))
+            print("  SKIP")
+            return 0
         und |= u
         dfn |= d
 
@@ -123,6 +170,7 @@ def main():
 
     if not quiet:
         print("== 可移植侧符号检查 ==")
+        print("  工具：%s" % tool)
         print("  目标文件：%s" % "、".join(os.path.basename(o) for o in objs))
         print("  未定义 %d 个；其中标准库 %d 个（musl 自带，无妨）"
               % (len(missing), len(std)))
