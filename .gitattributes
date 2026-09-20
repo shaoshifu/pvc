@@ -1,0 +1,73 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  .gitattributes —— 固定行尾与二进制类型
+#
+#  【为什么需要这个文件】
+#   本机 Windows 的 git 默认 core.autocrlf=true，会在 checkout 时把 LF 转成 CRLF、
+#   commit 时再转回 LF。看起来无害，实际会咬人：
+#     2026-09-21 网页版提交时，IDE 的 HTML 预览工具往 web/index.html 注入了一批
+#     `data-page-node-id` 属性；还原之后 `git status` **仍然显示文件被修改**，
+#     因为工作区是 CRLF、索引里是 LF，git 认为整份文件 38 行全变了。
+#     排查这个"假改动"花了好几分钟，还差点把 CRLF 版本当成正常内容提交进去。
+#
+#   显式声明之后，行尾与二进制判定都不再依赖每台机器的 git 配置 ——
+#   换一台机器 clone 下来就是同样的字节，CI 里也不会出现"只有一行不同"的假 diff。
+#
+#  【二进制那几条尤其重要】
+#   git 对**未声明**的二进制文件会尝试做行尾规范化或文本 diff。
+#   这里的 .png/.mp3 都是已预乘 alpha 的位图与压缩音频，
+#   一旦被当文本处理就可能损坏（而且文件仍能打开一部分，症状极隐蔽）。
+#  ═══════════════════════════════════════════════════════════════════════
+
+# ── 源码：统一 LF ──
+# 用 LF 而不是 CRLF：本项目同时构建 Windows 与 WebAssembly，
+# 而 MinGW gcc 与 emcc 都能正常读 LF；反过来 CRLF 在某些工具链里会出怪问题。
+*.c            text eol=lf
+*.h            text eol=lf
+*.py           text eol=lf
+*.js           text eol=lf
+*.mjs          text eol=lf
+*.css          text eol=lf
+*.html         text eol=lf
+*.md           text eol=lf
+*.txt          text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.json         text eol=lf
+*.sh           text eol=lf
+
+# ── Windows 批处理必须是 CRLF ──
+# cmd.exe 对 LF 结尾的 .bat 有已知的解析问题（尤其是带 label/goto 的脚本）。
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+
+# ── 二进制：声明为 binary，git 不做任何行尾转换 ──
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.bmp          binary
+*.gif          binary
+*.ico          binary
+*.mp3          binary
+*.wav          binary
+*.ogg          binary
+*.ttf          binary
+*.otf          binary
+*.woff         binary
+*.woff2        binary
+*.exe          binary
+*.dll          binary
+*.o            binary
+*.obj          binary
+*.wasm         binary
+*.data         binary
+*.raw          binary
+*.bin          binary
+*.dat          binary
+*.zip          binary
+
+# ── 生成的产物：不在 diff 与语言统计里出现 ──
+# 这些是 Actions 构建产出或测试抓帧的中间物，看 diff 没有意义。
+web/pvz.js         -diff linguist-generated
+web/pvz.wasm       -diff linguist-generated
+web/pvz.data       -diff linguist-generated
+_dump.c            -diff linguist-generated
