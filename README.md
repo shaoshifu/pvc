@@ -1,9 +1,17 @@
 # 植物大战僵尸 —— C 语言复刻版
 
-纯 C（C99）+ Win32 GDI 实现，**零第三方依赖**（不用 EasyX / SDL / raylib）。
-渲染采用 2× 超采样后降采样抗锯齿；美术资源走 32 位带 alpha 的 BMP + `AlphaBlend` 合成。
+纯 C（C99）实现，**零第三方依赖**（不用 EasyX / SDL / raylib）。
+渲染采用 2× 超采样后降采样抗锯齿；美术资源为 32 位带 alpha 的位图（预乘），
+经 `AlphaBlend` 合成。
 
-`pvz.exe` 已编译好，**双击即可开玩**。
+**同一份 `pvz.c` 同时构建两个平台**：
+
+| 平台 | 状态 | 说明 |
+|---|---|---|
+| **Windows 桌面版** | 可玩 | Win32 GDI 绘制 + Direct3D9 呈现（初始化失败自动回退纯 GDI）。`pvz.exe` 已编译好，**双击即可开玩** |
+| **网页版（iPad / 浏览器）** | 已构建通过 | 编译成 WebAssembly，[见下](#网页版webassembly--ipad)。为 iPad 做了触摸、横竖屏与安全区适配 |
+
+> 另有一份 iOS 移植方案（[IOS_PORT.md](IOS_PORT.md)）已做到接口层，暂缓。
 
 ---
 
@@ -372,7 +380,9 @@ v3 的四个杠杆：
 
 ## 美术资源
 
-`assets/` 下 165 张 32 位 BGRA BMP（alpha 预乘），由 AI 生成 + 后处理管线产出。
+`assets/` 下 800+ 张 32 位 BGRA 位图（alpha 预乘），由 AI 生成 + 后处理管线产出。
+发行用 **PNG**（带透明）/ **JPEG**（整屏不透明，压缩率更高）；**BMP 是打包流程的中间态**，
+只在「还没跑打包」时作为兜底被读取（见 `spriteLoadName` 的后缀尝试顺序）。
 完整的美术规范见 **ART_BIBLE.md**。
 
 | 类别 | 文件 |
@@ -451,6 +461,148 @@ python build_assets.py          # 读 raw/*.png -> 抠图 -> 合成 -> 输出 ..
 
 ---
 
+## 网页版（WebAssembly / iPad）
+
+同一份 `pvz.c` 同时构建桌面版与网页版。网页版可在 iPad Safari 里直接玩，
+建议**添加到主屏幕**后从主屏幕启动（全屏，没有地址栏）。
+
+完整方案与验证记录见 **[WEB_PORT.md](WEB_PORT.md)**。
+
+### 架构
+
+```
+                  ┌─────────────────┐
+                  │     pvz.c       │  游戏逻辑（约 14,000 行）
+                  │  零平台依赖      │
+                  └────────┬────────┘
+                           │ 只通过 plat.h 的接口访问平台
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+   ┌───────────┐    ┌────────────┐    ┌───────────┐
+   │  直通      │    │ plat_web.c │    │ (预留)     │
+   │  GDI/D3D9 │    │  软件光栅   │    │ iOS       │
+   │  Windows  │    │ WASM / 本机 │    │           │
+   └───────────┘    └────────────┘    └───────────┘
+```
+
+`plat.h` 在 Windows 下是**直通**（只 include windows.h，不包一层），
+所以桌面版行为一个字节不变；可移植侧实现同一批符号。
+
+| 项 | 实测值 |
+|---|---|
+| 游戏逻辑（零平台依赖） | 约 13,600 行 |
+| 平台代码（WinMain + 窗口/输入/音频/呈现） | 约 650 行 |
+| 需要重写的绘制原语 | **22 个** |
+| 需要实现的 Win32 符号 | **56 个** |
+| `plat_web.c` | 约 1,600 行 |
+
+两个让移植变简单的实测结论：
+1. `CreateFontW` **全工程只有 1 个调用点** → 文字渲染只需换一个入口
+2. MCI 只用了 **6 个动词**（open/play/stop/pause/close/status）→ 直译 Web Audio
+
+### 渲染路线：软件光栅 + 每帧一次上传
+
+不是"每个原语调 Canvas2D"——每帧有数百到上千次绘制调用，逐次跨 JS 边界开销太大，
+且 GDI 语义（预乘 alpha、世界变换、剪切区）要逐个映射、容易出静默偏差。
+
+```
+游戏逻辑 ──> 世界层 2000×1300 (BGRA) ──> BGRA→RGBA + alpha=255 ──> canvas
+              （逻辑 1000×650 × SS 2）        （外壳里做）
+```
+
+选软件光栅还有个**决定性优势**：它是纯 C，**本机 gcc 就能编译 + 逐像素验证**，
+不必等 WebAssembly 工具链。移植期 90% 的风险都靠这条查出来。
+
+> 世界层故意**不写 alpha**（GDI 的填充图元就是只写 RGB），
+> 这样它的字节流与 Windows 版**逐字节可比**（抓帧基线会 dump 全部 4 字节）。
+> canvas 需要的 alpha 由外壳补 —— 转换放在外壳，不放在光栅后端。
+
+### iPad 适配
+
+游戏内部坐标恒为 **1000×650**，适配全在呈现层：
+
+| 项 | 做法 |
+|---|---|
+| 分辨率 | canvas 像素尺寸恒为 2000×1300；显示尺寸按"等比铺满 + 居中"算。iPad 各型号（1180×820 / 1194×834 / 1366×1024）都不用改引擎 |
+| 裁切 | 用 **contain 而非 cover** —— cover 会把草坪两侧切掉，而草坪边缘正是"僵尸从哪来"的信息 |
+| 触摸 | 点按=确认；**长按 250ms=悬停**（触摸没有 hover，必须给替代）；拖动=种植手势，且不误触为点击 |
+| 命中区 | 可点元素不小于 **44×44 pt**（Apple HIG 下限） |
+| 方向 | 横屏是主力形态；竖屏给一个**可关闭**的提示但**仍可玩**。监听 `resize` / `orientationchange` / `screen.orientation` 三条路径（iPad 上不同 iOS 版本触发的组合不同），切换后重算触摸映射 |
+| 安全区 | `viewport-fit=cover` + `env(safe-area-inset-*)` |
+| 键盘 | iPad 没键盘 → 左下角一排屏幕按钮，走**同一个** `handleKey()`（所以行为不可能和桌面分叉） |
+| 音频 | iOS 要求**用户手势**后才能出声 → 启动页的"点击开始"按钮同时承担解锁 `AudioContext` 的职责 |
+| 后台 | iOS 会随时冻结页面 → `visibilitychange` 时立刻存档并暂停；`pagehide` 比 `unload` 可靠 |
+
+### 音频分工（刻意的）
+
+| 类型 | 体积 | 走法 |
+|---|---|---|
+| 音效 `sfx/*.wav` | 1.3 MB | MEMFS + Web Audio，低延迟 |
+| BGM `bgm/*.mp3` | 20 MB | HTMLAudio 按 URL **流式**播放 |
+
+BGM 不塞进 MEMFS：20MB 常驻内存不划算，而 HTMLAudio 支持边下边播，
+进游戏不用等整首下完。
+
+### 本地开发与验证（不需要 Emscripten）
+
+```bash
+bash _build_web_local.sh        # gcc 编译可移植分支 + 跑 60 帧 + 导出世界层
+python _test_web_shell.py       # 外壳端到端（Playwright 模拟 iPad，35 条断言）
+```
+
+原语级跨平台比对（`_ab_prim.c`：同一测试分别链接真 GDI 与软件光栅）：
+
+```bash
+gcc -O2 -o _ab_prim_win.exe _ab_prim.c -lgdi32 -luser32 -lmsimg32 -lm
+gcc -DPLAT_PORTABLE -O2 -o _ab_prim_web.exe _ab_prim.c plat_web.c -lm \
+    -Wl,--allow-multiple-definition
+```
+
+当前结果：`fillRect`（带 2× 世界变换）/ `AlphaBlend`（缩放）/ `StretchBlt`（缩放）
+**逐字节一致**；其余项差异 0.9%~4%（光栅取整，视觉不可分）。
+
+### 部署
+
+推送到 `main` 自动触发 `.github/workflows/build-web.yml`：
+
+1. **先用 gcc 跑可移植分支自检** —— 几十秒，能拦住 90% 的低级错误，
+   避免等几分钟 wasm 构建后才对着含糊的 emcc 报错排查
+2. emcc 构建 WASM（`--preload-file assets@/assets`）
+3. 部署 GitHub Pages
+
+**需要手动启用一次 Pages**：仓库 → Settings → Pages → Source 选 **GitHub Actions**。
+
+### 仓库体积
+
+| 内容 | 体积 |
+|---|---|
+| 原始 `assets/` | 375 MB |
+| − BMP 母版（845 个） | |
+| − WAV 母版（34MB → 3.1MB mp3） | |
+| − `art/` 下的素材生产中间产物 | |
+| **实际入库** | **约 82 MB / 1158 文件** |
+
+BMP/WAV 是打包流程的中间态，可由 `art/_pack_assets.py` 随时再生。
+
+### 网页版踩过的坑
+
+都是**不报错、只是画错**的类型，靠逐像素比对与端到端测试才抓到：
+
+| # | 坑 | 症状 |
+|---|---|---|
+| 1 | `FillRect` 取色读到对象池的 `type` 字段 | 所有填充变成 R=2 的近黑，整屏几乎全黑 |
+| 2 | 以为 `AlphaBlend` 不吃世界变换（见上文修正） | 缩放类绘制整体差 2 倍 |
+| 3 | `Polygon` 内外判定用了**未变换**的坐标 | 只画出应画面积的 40%（位置对、范围不对） |
+| 4 | `putOpaque` 写了 alpha | 每个原语都报"100% 不同"，而 RGB 其实逐字节一致 |
+| 5 | `plat.h` 里 `NULL_PEN` 与 `NULL_BRUSH` **都是 NULL** | 后端无法区分"只填充"与"只描边"（引擎里分别用了 4 处和 8 处） |
+| 6 | 缺 `GdiFlush` | GDI 绘制是批处理的，不 flush 读 DIB 拿到陈旧内存 |
+| 7 | `draftPickOne` 的边界 | `n<=0` 时 `rand()%m` 是**除零**；`n>R_COUNT` 会**越界写栈** |
+| 8 | `_wfopen` 未转反斜杠 | MEMFS 与 POSIX 都不认反斜杠 → wasm 下素材**全部**加载失败。⚠️ 本机 Windows 的 `fopen` 恰好能吃反斜杠，**本地验证拦不住** |
+| 9 | `[hidden]` 被 `display:flex` 覆盖 | 横屏时那个提示层不可见却**吃掉所有触摸**，游戏完全点不动。截图看一切正常 |
+| 10 | `checkOrientation()` 里的 `if(!running) return` | 顺序依赖 → 竖屏提示永远不出现 |
+
+---
+
 ## 编译
 
 ```bash
@@ -485,13 +637,13 @@ gcc -O2 -mwindows -static-libgcc -o pvz.exe pvz.c -lgdi32 -luser32 -lmsimg32 -lw
 
 ---
 
-## 代码结构（单文件 `pvz.c`，约 6600 行）
+## 代码结构（单文件 `pvz.c`，约 14,000 行）
 
 | 区块 | 内容 |
 | --- | --- |
 | GDI 缓存层 | 画刷 / 画笔按 (颜色, 宽度) 缓存，避免每帧创建 GDI 对象 |
 | 绘图小工具 | `fillCircle` / `fillEllipse` / `fillRect` / `fillRound` / `poly` / `putText*` |
-| **精灵系统** | `spriteLoad`（手写 BMP 解析 → `CreateDIBSection`）、`spriteTint`（剪影）、`spriteBlit`（`AlphaBlend`） |
+| **精灵系统** | `spriteLoad`（`stb_image` 解码 PNG/JPEG/BMP → `CreateDIBSection`）、`spriteTint`（剪影）、`spriteBlit`（`AlphaBlend`） |
 | 植物造型 | `drawPlantShape()` 有资源走精灵，无资源回退 `drawPlantShapeProc()`；同一函数复用于场景与卡片图标 |
 | 僵尸造型 | `drawZombie()` / `drawZombieProc()`，同上双路径 |
 | 游戏逻辑 | `updateGame()` 波次、出怪、植物技能、豌豆、僵尸、推车、阳光、粒子 |
@@ -505,9 +657,21 @@ gcc -O2 -mwindows -static-libgcc -o pvz.exe pvz.c -lgdi32 -luser32 -lmsimg32 -lw
 `SetWorldTransform` 放大 2 倍到 2000×1300 物理像素）绘制。普通窗口生成一份 1× 兼容帧；
 高 DPI 或全屏输出直接从 2× 世界层一次采样到目标尺寸，避免先降到 1× 再放大导致模糊。
 
-**2. 精灵坐标**：`AlphaBlend` 用设备坐标且**不受世界变换影响**，所以 `spriteBlit` 会
-临时把变换复位、用 `逻辑坐标 × SS` 计算目标矩形，画完再恢复。
-精灵始终画在世界层，由 `spriteBlit` 负责逻辑坐标与资源像素之间的换算。
+**2. 精灵坐标**：`spriteBlit` 会临时把变换复位、用 `逻辑坐标 × SS` 计算目标矩形，
+画完再恢复。精灵始终画在世界层，由 `spriteBlit` 负责逻辑坐标与资源像素之间的换算。
+
+> ⚠️ **上面这段里原来的说法「`AlphaBlend` 不受世界变换影响」是错的**，2026-09-21 实测推翻：
+>
+> GDI 在 `GM_ADVANCED` 下，`BitBlt` / `StretchBlt` / `AlphaBlend` **都会应用世界变换**。
+> 实测依据：目标矩形传 32 设备像素，GDI 实际输出 64（正好 ×SS=2）。
+>
+> 之所以一直没暴露，是因为 `spriteBlit` 里**恰好**先 `SetWorldTransform(gIdentXF)`
+> 复位成了单位变换 —— 此时"吃不吃变换"结果相同，两种理解**无法区分**。
+> 直到写网页版的软件光栅后端、做了**独立的原语级 A/B 测试**
+> （`_ab_prim.c`，同一个测试分别链接真 GDI 与软件光栅），才把这件事钉清楚。
+>
+> 教训：**"看起来对"不等于实现正确**。当代码里存在一个让两种相反理解等价的
+> 巧合条件时，任何基于该路径的测试都无法证伪它们。
 
 ---
 
