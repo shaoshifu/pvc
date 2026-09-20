@@ -19,6 +19,18 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ★★★ 必须有这条规则，否则隐藏层会"看不见但仍然吃触摸"。
+   HTML 的 `hidden` 属性靠浏览器默认样式 `[hidden] { display: none }` 生效，
+   但它只是**普通优先级** —— 任何显式写 `display: flex` 的规则都会把它盖掉。
+   本文件里 #boot / #rotateHint / #keys / #diag 四个都是 display:flex，
+   所以全都中招：
+     · #rotateHint —— 横屏时它是 hidden 的，但仍在屏幕上铺满一层，
+       结果**所有触摸都被它吃掉，游戏完全点不动**（本机 Playwright 实测到）；
+     · #keys —— 反过来：启动页还没点"开始"，快捷键按钮就已经显示出来了。
+   这是"看不见的功能性 bug"，肉眼看截图完全正常。
+   （测试见 _test_web_shell.py。） */
+[hidden] { display: none !important; }
+
 html, body {
     width: 100%;
     height: 100%;

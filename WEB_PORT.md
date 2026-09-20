@@ -305,13 +305,13 @@ Web 后端本地编译（gcc，同一份 C） → baseline_web.raw
 |---|---|---|---|
 | **P1 驱动接口** ✅ 本轮完成 | `gameBoot` / `gameStep` / `gameWorldBits` 抽出，`WinMain` 条件编译 | 编译零告警 + 17 个回归全过 | 否 |
 | **P2 软件光栅后端** ✅ 本轮完成 | `plat_web.c`（约 1150 行）：56 个符号 + 22 个原语 | 本机 gcc 编译通过 + 原语级逐像素比对（3 项完全一致） | 否 |
-| **P3 文字与音频** | 字形图集 + Web Audio | 本地：文字包围盒比对；音频：结构测试 | 否 |
-| **P4 Web 外壳** | `index.html` + 触摸 + 方向 + 安全区 + PWA | 本机浏览器（Chrome 触摸模拟）+ iPad 实机 | 否 |
+| **P3 音频** ✅ 完成 / 文字待做 | MCI 状态机 + Web Audio + HTMLAudio 流式 | 端到端音频调用链验证 | 否 |
+| **P4 Web 外壳** ✅ 完成 | `index.html` + 触摸 + 方向 + 安全区 | **Playwright 模拟 iPad，35 条断言全过** | 否 |
 | **P5 云端构建** | GitHub Actions 出 WASM + 部署 | 链接在 iPad Safari 打开 | **是** |
 | **P6 实机调优** | 帧率、触摸手感、性能保底开关 | iPad 实机 | 是 |
 
-**P1、P2 已完成。P3~P4 完全可以现在推进，且全程本地可验证。**
-P5 一旦你定了路径（A 或 B）就能接上。
+**P1~P4 已完成。**剩下：P5 云端构建（需先手动建一次 GitHub 仓库）、
+P6 iPad 实机调优、以及文字渲染的字形图集（当前本机测试用占位块）。
 
 ---
 
@@ -368,6 +368,65 @@ P5 一旦你定了路径（A 或 B）就能接上。
   已明确记录，属于后续可继续收敛的项。
 - **结论**：主流渲染路径（精灵 blit + 世界变换 + 混合）已证明可逐像素对齐，
   这是网页版可行性的关键证据。
+
+---
+
+## 6.6 ★ P3 + P4 结果：音频桥接、iPad 外壳、端到端验证
+
+### 已完成
+
+| 模块 | 内容 |
+|---|---|
+| **音频桥接** | `plat_web.c` 里的 MCI 状态机（别名表 + 6 个动词）+ Web Audio |
+| **iPad 外壳** | `web/index.html` / `shell.css` / `shell.js`（约 1000 行） |
+| **端到端验证** | `_test_web_shell.py`，Playwright 模拟 iPad 视口，**35 条断言全过** |
+| **CI** | `.github/workflows/build-web.yml`（gcc 自检 → emcc → 部署 Pages） |
+
+**音频分工**（刻意的）：音效（1.3MB）走 MEMFS + Web Audio，低延迟；
+BGM（20MB）走 HTMLAudio 按 URL 流式，不占 wasm 内存、支持边下边播。
+
+### 端到端验证覆盖的场景
+
+在 **iPad Pro 11 横屏 1194×834** 与 **竖屏 834×1194** 两种视口下各跑一遍：
+
+- 页面加载无 JS 错误；启动按钮可用
+- canvas 像素尺寸恒为 2000×1300（与引擎世界层一致）
+- 显示比例保持 1.538（**不裁切**），黑边上下/左右均匀（居中）
+- **真实帧注入**：把真后端导出的世界层灌进模拟堆，验证整条管线
+  （真像素 → HEAPU32 → BGRA→RGBA + alpha=255 → putImageData → canvas）
+  - 暗部占比 11%（确实有内容，不是全黑）
+  - alpha 不透明占比 100%（外壳正确补了 alpha）
+  - **G=110 > B=41**（草坪是绿的 → 通道顺序正确，无 R/B 互换）
+- 触摸点按 → `gamePointerDown(500,325)`（逻辑坐标精确）
+- 长按 250ms → 触发悬停、**不**触发点击
+- 拖动 → **不**触发点击
+- 屏幕快捷键 → `handleKey(32)`
+- 竖屏 → 出现"横屏体验更好"提示，且可关闭
+- 旋转到竖屏 → 提示重新出现，且中心点仍映射到 (500,325)
+
+### 这一步抓到的两个真 bug（都靠浏览器实测才发现）
+
+1. **`[hidden]` 被 `display:flex` 覆盖 —— 横屏时游戏完全点不动。**
+   `#rotateHint` 是 `display:flex`，它把 HTML 的 `hidden` 默认样式
+   （`display:none`）盖掉了。于是横屏时那个"提示层"虽然不可见，
+   却仍然铺满整屏、**吃掉所有触摸**。
+   截图上看一切正常 —— 只有自动化点击才暴露（Playwright 报
+   "intercepting pointer events"）。已加 `[hidden] { display:none !important }`。
+   > 同类问题还波及 `#keys`：启动页还没点"开始"，快捷键按钮就显示出来了。
+
+2. **`checkOrientation()` 里的 `if (!running) return` 让竖屏提示永远不出现。**
+   `startGame()` 是"先调 checkOrientation()、再置 running = true"，
+   所以那一句直接短路了整个提示逻辑。
+   这类**顺序依赖**的 bug 读代码很难发现。
+
+### 仓库与构建
+
+- 本地仓库已就绪：`main` 分支，**81.6 MiB / 1157 文件**
+  （从 337MB 裁下：排除 BMP/WAV 母版与 `art/` 下的素材生产中间产物）
+- Actions 工作流：先 gcc 自检（几十秒，能拦住 90% 的低级错误）
+  → 再 emcc 构建 → 部署 Pages
+- **待办**：connector 的 GitHub 授权**不含建仓库权限**（`POST /user/repos`
+  返回 403 `Resource not accessible by integration`），需要手动建一次仓库。
 
 ---
 

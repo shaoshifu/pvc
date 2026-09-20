@@ -542,7 +542,12 @@ function isPortrait() {
 
 function checkOrientation() {
     layout();
-    if (!running) return;
+    /* ⚠️ 这里**不能**加 `if (!running) return` ——
+       竖屏提示属于"布局层"的事，与游戏有没有在跑无关。
+       之前加了这一句，而 startGame 里是先调 checkOrientation()
+       再置 running = true，于是竖屏提示**永远不出现**
+       （本机 Playwright 实测：竖屏视口下 rotateHint 始终 hidden）。
+       这类"顺序依赖"的 bug 很难靠读代码发现，必须有端到端测试。 */
     if (isPortrait() && !portraitHintClosed) {
         rotateEl.hidden = false;
     } else {
