@@ -73,15 +73,17 @@ jobs:
           #   本机 MinGW 会因为 kernel32/msvcrt 兜底而**看不出**缺口，
           #   而 emcc 到 musl 上直接链接失败。
           #   于是前面 6 步全过、到第 7 步才炸，而且日志要认证才能下载、只能猜。
-          #   现在这一步会在十几秒内指名道姓地报出来。
-          if ! python3 _check_web_symbols.py > /tmp/symcheck.log 2>&1; then
-            cat /tmp/symcheck.log
-            # 失败时把日志贴到 commit 评论 —— Actions 原始日志要认证才能下载（403），
-            # 而公开仓库的评论无需登录即可读，于是"失败但看不到原因"的死循环被打破。
-            bash _ci_post_log.sh /tmp/symcheck.log "可移植侧符号检查失败"
-            exit 1
-          fi
+          #
+          # ⚠️ 这里刻意 **无论成败都把输出贴到 commit 评论**。
+          #    第一版只在失败时贴，而它偏偏在 CI 上失败、我读不到原始日志，
+          #    于是又回到"只能猜"。诊断的价值在于**失败时**可见，不是成功时。
+          python3 _check_web_symbols.py > /tmp/symcheck.log 2>&1
+          RC=$?
+          echo "==== 符号检查输出（退出码 $RC）===="
           cat /tmp/symcheck.log
+          TITLE="符号检查结果（退出码 $RC）" bash _ci_post_log.sh /tmp/symcheck.log \
+            || echo "（上报失败，继续）"
+          if [ $RC -ne 0 ]; then exit 1; fi
 
       - name: 安装 Emscripten
         uses: mymindstorm/setup-emsdk@v14
