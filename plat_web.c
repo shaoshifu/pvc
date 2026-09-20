@@ -1410,14 +1410,148 @@ void Sleep(DWORD ms) { (void)ms; }
 /*  杂项                                                                  */
 /* ====================================================================== */
 
+/* ---- wsprintfW：必须**自己实现**，不能委托给 vswprintf ---------------------------------
+   ★★ 这是 2026-09-21 网页版"素材载入 0 张"的根因，值得完整记下来。
+
+   问题出在 `%s` 的语义：
+     · **Windows / MSVC**：宽格式串里 `%s` 接受 **`wchar_t*`**
+       （这是 MSVC 的非标准扩展，Windows 上所有代码都这么写）
+     · **musl / POSIX（Emscripten 用的就是它）**：`%s` 接受 **`char*`**，
+       要传宽字符串必须写 `%ls`
+
+   引擎里有 38 处 `wsprintfW(path, L"%s%s.png", gAssetDir, name)` 这样的调用，
+   参数全是 `wchar_t*`。第一版我把它实现成 `vswprintf(out, 512, fmt, ap)`：
+     · 本机 MinGW 的 vswprintf 走的是 **MSVC 语义** → 正常 →
+       `_build_web_local.sh` 一路绿灯，853 张素材照常加载
+     · Emscripten 的 musl 走 **POSIX 语义** → 把 `wchar_t*` 当 `char*` 读 →
+       拼出垃圾路径 → `_wfopen` 全部失败 → **素材载入 0 张**，
+       而且**不报任何错**，画面只是退化成程序化图形
+
+   这又是一个"本地过、目标平台失败"——和 `_wcsicmp` 那次同一类，
+   但这次不是缺符号，是**语义差异**，链接检查抓不到。
+
+   所以这里改成自己解析格式串、按 **Windows 语义**实现。
+   自己实现还有个额外好处：函数变成**平台无关**的，
+   于是本机写单元测试就真的能覆盖它（委托给 vswprintf 的话，本机测试永远通过，
+   测了个寂寞）。测试见 `_test_web_printf.c`。
+
+   引擎实际用到的格式符（实测统计，只有这 6 种）：
+       %d  %s(宽)  %02d  %.2f  %.0f  %%
+   这里额外支持 %u %x %c %ld %lu %lld %f，成本几乎为零。
+   ------------------------------------------------------------------------- */
+static void wspAppendInt(wchar_t **o, long long v, int width, int zero, int base,
+                         int upper, int isUnsigned)
+{
+    const wchar_t *dig = upper ? L"0123456789ABCDEF" : L"0123456789abcdef";
+    wchar_t tmp[32];
+    int n = 0, neg = 0, written;
+    unsigned long long u;
+    /* ★ isUnsigned 不能省：%u 的值若经 `long` 中转会变负数，
+       于是 UINT_MAX 被印成 "-1"。宽整数靠 unsigned long long 承载，
+       base != 10 时（%x）本来就不加负号，但也一并走无符号分支保持一致。 */
+    if (!isUnsigned && v < 0 && base == 10) {
+        neg = 1;
+        u = (unsigned long long)(-(v + 1)) + 1ull;
+    } else {
+        u = (unsigned long long)v;
+    }
+    do { tmp[n++] = dig[u % (unsigned)base]; u /= (unsigned)base; } while (u);
+
+    /* ★ 顺序必须是：符号 → 补位 → 数字。
+       第一版把符号当成普通字符一起塞进 tmp 再整体补位，于是 %03d 传 -5
+       得到 "0-5"（零跑到符号前面）。正确是 "-05"：零补在符号**之后**。
+       —— 这个 bug 是被 _test_web_printf.c 里的 %03d 用例抓出来的。 */
+    if (neg) *(*o)++ = L'-';
+    written = neg ? 1 : 0;
+    while (written + n < width) { *(*o)++ = zero ? L'0' : L' '; written++; }
+    while (n) *(*o)++ = tmp[--n];
+}
+
+static void wspAppendFloat(wchar_t **o, double v, int prec)
+{
+    /* 浮点交给窄字符 snprintf 处理（musl 与 msvcrt 的 %.Nf 行为一致），
+       再把结果拓宽。自己实现浮点格式化不值得，且容易在舍入上出偏差。 */
+    char buf[64];
+    int i;
+    if (prec < 0) prec = 6;
+    if (prec > 17) prec = 17;
+    snprintf(buf, sizeof(buf), "%.*f", prec, v);
+    for (i = 0; buf[i] && i < (int)sizeof(buf) - 1; i++)
+        *(*o)++ = (wchar_t)(unsigned char)buf[i];
+}
+
 int wsprintfW(wchar_t *out, const wchar_t *fmt, ...)
 {
     va_list ap;
-    int n;
+    wchar_t *o = out;
+    if (!out) return 0;
+    if (!fmt) { *out = 0; return 0; }
     va_start(ap, fmt);
-    n = vswprintf(out, 512, fmt, ap);
+
+    while (*fmt) {
+        int zero = 0, width = 0, prec = -1, longCount = 0;
+        if (*fmt != L'%') { *o++ = *fmt++; continue; }
+        fmt++;
+        if (*fmt == L'%') { *o++ = L'%'; fmt++; continue; }
+
+        if (*fmt == L'-') fmt++;                    /* 左对齐：引擎没用，忽略宽度意义 */
+        if (*fmt == L'0') { zero = 1; fmt++; }
+        while (*fmt >= L'0' && *fmt <= L'9') { width = width * 10 + (int)(*fmt - L'0'); fmt++; }
+        if (*fmt == L'.') {
+            fmt++; prec = 0;
+            while (*fmt >= L'0' && *fmt <= L'9') { prec = prec * 10 + (int)(*fmt - L'0'); fmt++; }
+        }
+        while (*fmt == L'l' || *fmt == L'h') { if (*fmt == L'l') longCount++; fmt++; }
+
+        switch (*fmt) {
+        case L'd':
+        case L'i':
+            if (longCount >= 2)      wspAppendInt(&o, va_arg(ap, long long), width, zero, 10, 0, 0);
+            else if (longCount == 1) wspAppendInt(&o, va_arg(ap, long), width, zero, 10, 0, 0);
+            else                     wspAppendInt(&o, va_arg(ap, int), width, zero, 10, 0, 0);
+            break;
+        case L'u':
+            if (longCount >= 2)      wspAppendInt(&o, (long long)va_arg(ap, unsigned long long), width, zero, 10, 0, 1);
+            else if (longCount == 1) wspAppendInt(&o, (long long)va_arg(ap, unsigned long), width, zero, 10, 0, 1);
+            else                     wspAppendInt(&o, (long long)va_arg(ap, unsigned), width, zero, 10, 0, 1);
+            break;
+        case L'x':
+        case L'X':
+            wspAppendInt(&o, (long long)va_arg(ap, unsigned), width, zero, 16, *fmt == L'X', 1);
+            break;
+        case L'f':
+        case L'F':
+            wspAppendFloat(&o, va_arg(ap, double), prec);
+            break;
+        case L's': {
+            /* ★ 关键：Windows 语义 —— `%s` 收 `wchar_t*`。
+               不要"顺手改成 %ls"，因为改的是 38 处调用点，
+               而它们在 Windows 上本来就是对的（MSVC 就是这语义）。 */
+            const wchar_t *v = va_arg(ap, const wchar_t *);
+            if (!v) v = L"(null)";
+            while (*v) *o++ = *v++;
+            break;
+        }
+        case L'c': {
+            wchar_t v = (wchar_t)va_arg(ap, int);
+            *o++ = v;
+            break;
+        }
+        case L'\0':
+            *o++ = L'%';
+            goto done;
+        default:
+            /* 不认识的格式符：原样输出，不静默丢弃（静默丢弃会让问题更难查） */
+            *o++ = L'%';
+            *o++ = *fmt;
+            break;
+        }
+        if (*fmt) fmt++;
+    }
+done:
+    *o = 0;
     va_end(ap);
-    return n < 0 ? 0 : n;
+    return (int)(o - out);
 }
 
 #ifndef _WIN32
@@ -1469,6 +1603,20 @@ FILE *_wfopen(const wchar_t *path, const wchar_t *mode)
         （用 nm 求“未定义 − 已定义 − 标准库”的差集，
          任何残留的非标准符号都会让 CI 提前失败并指名道姓报出来）
       → 这条检查加进了 workflow 与 _regress.sh，所以以后不会再重演。 */
+
+/* ⚠️ 下面这组 shim **刻意在所有平台都编译**（不用 #ifndef _WIN32 排除）。
+   理由正是本项目已经栽过两次的坑：
+     若在 Windows 上用 msvcrt 的同名函数、只在 wasm 上用我们的实现，
+     那本机跑的就是另一份代码 —— 本机全绿也证明不了线上能跑。
+     保留同一份实现，`_test_web_printf.c` 这类本机测试才真的覆盖到线上代码。
+
+   代价是 MinGW：msvcrt 的 stdio.h/wchar.h 已把这些声明成 dllimport，
+   我们再定义一次会触发 -Wattributes。那 4 条警告纯粹是重复声明造成的，
+   与代码正确性无关，但会淹没真正的告警 —— 所以在这里精确地压掉。 */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattributes"
+#endif
 
 /* 宽字符的大小写不敏感比较。引擎用它判断 BGM 扩展名（".mp3"/".m4a"）
    与 MCI 状态（"stopped"），所以行为和返回值必须和 MSVCRT 一致：
@@ -1528,6 +1676,10 @@ wchar_t *_wgetenv(const wchar_t *name)
 
 /* 设置环境变量：wasm 里没有意义，但要保证符号存在（外壳里的测试代码会用） */
 int _wputenv(const wchar_t *envstr) { (void)envstr; return 0; }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 BOOL GetClientRect(HWND hwnd, RECT *rc)
 {

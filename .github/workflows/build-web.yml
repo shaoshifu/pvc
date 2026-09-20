@@ -105,6 +105,23 @@ jobs:
           echo "（符号检查不阻塞构建；emcc 才是权威）"
           exit 0
 
+      - name: wsprintfW 语义测试（Windows 语义 vs POSIX 语义）
+        run: |
+          # ★ 这一步是 2026-09-21 线上"素材载入 0 张、画面退化成程序化图形"之后加的。
+          #
+          #   根因：宽格式串里的 `%s`，MSVC 语义收 `wchar_t*`，POSIX 语义收 `char*`。
+          #   第一版把 wsprintfW 委托给 `vswprintf` —— 本机 MinGW 走 MSVC 语义
+          #   所以本地验证全绿，而 emcc 的 musl 走 POSIX 语义，把 `wchar_t*`
+          #   当 `char*` 读，853 张素材的路径全变垃圾，**且不报任何错**
+          #   （符号存在、语法合法，符号检查与编译告警都抓不到）。
+          #
+          #   ⚠️ 这一步**必须跑在 Ubuntu 上**才有回归防护力：
+          #      若有人把 wsprintfW 改回委托 vswprintf，只有 POSIX 平台会失败 ——
+          #      Windows 本机因为 MSVC 语义恰好正确，反而会漏过。
+          gcc -DPLAT_PORTABLE -O2 -Wall -Wextra -I. \
+              -o /tmp/test_wprintf _test_web_printf.c plat_web.c -lm
+          /tmp/test_wprintf
+
       - name: 安装 Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:

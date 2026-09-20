@@ -37,7 +37,7 @@ if [ -f pvz_new.exe ]; then
 else
     echo "  ★ pvz.c 编译失败"; cfail=$((cfail+1))
 fi
-"C:/Python314/python.exe" _mk_framedump.py >/dev/null 2>&1 && echo "  _dump.exe 已重建"
+"$PYTHON_BIN" _mk_framedump.py >/dev/null 2>&1 && echo "  _dump.exe 已重建"
 
 echo
 echo "=== ② 编译全部测试（失败会显式报错，不再吞掉）==="
@@ -75,7 +75,42 @@ done
 rm -f _rb_chk.bin
 
 echo
-echo "=== ④ 可移植侧符号检查 ==="
+echo "=== ④ wsprintfW 语义测试（平台无关）==="
+# 锁的是「宽格式串里的 %s 收 wchar_t*」这条 **Windows 语义**。
+# 2026-09-21 线上"素材载入 0 张、画面退化成程序化图形"就是它造成的：
+# 第一版把 wsprintfW 实现成 vswprintf 委托，MinGW 走 MSVC 语义（正常），
+# Emscripten 的 musl 走 POSIX 语义（%s 收 char*）→ 853 张素材静默全部加载失败。
+#
+# 为什么本机跑这个测试有意义：wsprintfW 现在是**自己实现的**，
+# 两个平台跑同一份代码，所以本机结果对线上有预测力。
+# （若有人改回委托 vswprintf，本机会因为 MSVC 语义恰好正确而漏过，
+#   但 CI 的 Ubuntu 上会立刻 FAIL —— 所以这一条必须也在 CI 里跑。）
+WP_EXE=_test_web_printf.exe
+WP_EXTRA=""
+case "$(uname -s)" in
+    # MinGW 默认链接 kernel32/msvcrt，与我们的软件光栅同名符号冲突；
+    # 需要允许重复定义（详情见 _build_web_local.sh 的说明）。
+    MINGW*|MSYS*|CYGWIN*) WP_EXTRA="-Wl,--allow-multiple-definition" ;;
+esac
+WP_OUT=$(gcc -DPLAT_PORTABLE -O2 -Wall -Wextra -I. -o $WP_EXE _test_web_printf.c plat_web.c -lm $WP_EXTRA 2>&1)
+if [ -n "$WP_OUT" ]; then
+    echo "  ★ 编译告警/错误："
+    echo "$WP_OUT" | head -8
+    cfail=$((cfail+1))
+    rm -f $WP_EXE          # 编译不过就删掉旧 exe，别让陈旧二进制假装通过
+fi
+if [ -f $WP_EXE ]; then
+    if ./$WP_EXE >/dev/null 2>&1; then
+        echo "  PASS"
+        pass=$((pass+1))
+    else
+        echo "  ★ FAIL（跑 ./$WP_EXE 看是哪条用例）"
+        fail=$((fail+1))
+    fi
+fi
+
+echo
+echo "=== ⑤ 可移植侧符号检查 ==="
 if "$PYTHON_BIN" _check_web_symbols.py --quiet >/dev/null 2>&1; then
     echo "  PASS"
 else
@@ -84,7 +119,7 @@ else
 fi
 
 echo
-echo "=== ⑤ 资源核对 ==="
+echo "=== ⑥ 资源核对 ==="
 if "$PYTHON_BIN" _verify_assets.py --quiet >/dev/null 2>&1; then
     echo "  PASS"
 else
@@ -95,7 +130,7 @@ fi
 echo
 echo "=== 汇总：通过 $pass / 失败 $fail / 编译问题 $cfail ==="
 echo "=== 真档核对 ==="
-"C:/Python314/python.exe" -c "
+"$PYTHON_BIN" -c "
 import struct
 b=open('pvz_save.dat','rb').read()
 own=struct.unpack_from('<120i',b,584)

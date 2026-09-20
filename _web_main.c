@@ -65,6 +65,17 @@ int main(int argc, char **argv)
     gameInitAll();                       /* createLayers + 字体 + 载图 + 开局 */
     printf("  开局完成，gState 已就绪\n");
 
+    /* ★ 必须打印素材加载数 —— 这是 2026-09-21 线上"画面全黑"的直接指标。
+       那次 wsprintfW 的 %s 走成了 POSIX 语义（收 char* 而不是 wchar_t*），
+       拼出的资源路径全变垃圾，853 张素材**一张都没加载**，
+       而画面只是安静地退化成程序化图形 —— 不报错、不崩溃、控制台干净。
+       唯一的线索就是这个数字从 853 掉到 0。
+       所以它必须在**本地验证的输出里可见**，而不是只靠线上浏览器去猜。 */
+    {
+        extern int gameArtCount(void);
+        printf("  素材载入 %d 张\n", gameArtCount());
+    }
+
     /* 跑若干帧。第一帧负责把所有素材解码进内存，之后是稳态帧。 */
     for (i = 0; i < frames; i++)
         gameStep(1.0f / 60.0f, GetDC(NULL));
