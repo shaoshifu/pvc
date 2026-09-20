@@ -1,0 +1,191 @@
+==================================================================================================
+UI 可见性证明报告 —— 每条都基于「程序自导的最终帧 BMP」里的探针色像素实测
+==================================================================================================
+
+A. 各界面：画了多少处文字 / 其中多少真的出现在屏幕上
+--------------------------------------------------------------------------------------------------
+  界面            帧号 |     调用     可见    不可见
+  ST_MENU      192 |     28     22      6
+  ST_PLAY      241 |     41     34      7
+  ST_PAUSE     290 |     43     17     26
+  ST_WIN       340 |     45     19     26
+  ST_LOSE      388 |     45     19     26
+  ST_DRAFT     427 |     71     64      7
+  ST_LEVELS    477 |     56     50      6
+  ST_TALENTS   520 |     76     70      6
+  ST_ACH       551 |     94     88      6
+  ST_GACHA     599 |     20     14      6
+  ST_LOADOUT   638 |     80     74      6
+  ST_REWARD    687 |     18     12      6
+  ST_DAILY     746 |     34     28      6
+
+B. 全状态可见性汇总（按调用点 / pvz.c 行号）
+--------------------------------------------------------------------------------------------------
+  从未可见的调用点：14 处
+  部分状态可见、部分不可见：0 处
+
+  ▸ 从未可见（= 死代码 或 恒被遮挡）：
+      pvz.c:2101  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「向日葵」
+              putTextS(dc, gF22, RGB(44, 34, 20), RGB(255, 255, 255), pd->name,
+      pvz.c:2108  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「普通植物」
+              putTextS(dc, gF15, RGB(140, 140, 130), RGB(255, 255, 255),
+      pvz.c:2114  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「阳光 46    冷却 f 秒    生命 f」
+              putTextS(dc, gF15, RGB(70, 60, 44), RGB(255, 255, 255), buf, tx + 12.0f, ty + 70.0f, 0);
+      pvz.c:2117  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「46」
+              putTextS(dc, gF18, RGB(80, 62, 20), RGB(255, 255, 255), buf, tx + TIP_W - 34.0f, ty + 27.0f, 1);
+      pvz.c:4831  [frame层] 3 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「左键选中后点草坪种下；右键取消选择」
+              putText(dc, f, c, buf, x, y + (float)lines * lh, 0);
+      pvz.c:5593  [frame层] 26 帧全不可见 · 界面 ST_ACH,ST_DAILY,ST_DRAFT,ST_GACHA,ST_LEVELS,ST_LOADOUT,ST_LOSE,ST_MENU,ST_PAUSE,ST_PLAY,ST_REWARD,ST_TALENTS,ST_WIN
+              「标准模式  [M]」
+              putTextS(gFrameDC, gF15, RGB(255, 255, 255), tint(MODE_COL[gCurMode], -0.45f),
+      pvz.c:5634  [frame层] 26 帧全不可见 · 界面 ST_ACH,ST_DAILY,ST_DRAFT,ST_GACHA,ST_LEVELS,ST_LOADOUT,ST_LOSE,ST_MENU,ST_PAUSE,ST_PLAY,ST_REWARD,ST_TALENTS,ST_WIN
+              「充能：下次爆炸 +60%」
+              putTextS(gFrameDC, gF15, RGB(210, 210, 200), RGB(20, 30, 20),
+      pvz.c:5644  [frame层] 26 帧全不可见 · 界面 ST_ACH,ST_DAILY,ST_DRAFT,ST_GACHA,ST_LEVELS,ST_LOADOUT,ST_LOSE,ST_MENU,ST_PAUSE,ST_PLAY,ST_REWARD,ST_TALENTS,ST_WIN
+              「愤怒条」
+              putTextS(gFrameDC, gF15, RGB(255, 226, 200), RGB(40, 20, 14),
+      pvz.c:5763  [frame层] 5 帧全不可见 · 界面 ST_DRAFT,ST_LOSE,ST_PAUSE,ST_PLAY,ST_WIN
+              「225」
+              putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      pvz.c:5792  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「向日葵   46 阳光」
+              putTextCS(gFrameDC, gF18, RGB(255, 248, 210), RGB(20, 30, 20), buf, (float)mMouseX, 100);
+      pvz.c:5801  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「第 0 / 20 波」
+              putTextCS(gFrameDC, gF15, RGB(255, 250, 220), RGB(28, 22, 14), buf,
+      pvz.c:5812  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「击杀 0」
+              putTextS(gFrameDC, gF18, RGB(232, 228, 202), RGB(20, 30, 20), buf, 18, 614, 0);
+      pvz.c:5815  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「自动拾取 [A] 开」
+              putTextS(gFrameDC, gF15, gAutoSun ? RGB(178, 240, 150) : RGB(206, 206, 196),
+      pvz.c:5818  [frame层] 6 帧全不可见 · 界面 ST_LOSE,ST_PAUSE,ST_WIN
+              「飘落特效 [W] 开」
+              putTextS(gFrameDC, gF15, gWeatherOn ? RGB(178, 240, 150) : RGB(206, 206, 196),
+
+  ▸ 部分可见（说明它依赖状态/条件分支，不是死代码）：
+      无
+
+C. 真·压字（两条**可见**文字的墨迹确实叠在一起）：21 类
+--------------------------------------------------------------------------------------------------
+  [ST_LOADOUT] 重叠比 100% · 重叠面积 2340px²
+      压字一 pvz.c:5099  墨迹(435,83 130x18) frame 「星星 1　金币 41」
+            putTextCS(dc, gF18, RGB(255, 226, 150), RGB(18, 32, 20), buf, VIEW_W * 0.5f, 90.0f);
+      压字二 pvz.c:5156  墨迹(290,83 409x18) frame 「点一下切换候选　（准备 5 株，开局携带其中 4 株）」
+            putTextCS(dc, gF18, RGB(220, 240, 210), RGB(18, 32, 20),
+  [ST_REWARD] 重叠比 100% · 重叠面积 3480px²
+      压字一 pvz.c:5092  墨迹(442,51 120x29) frame 「植物抽卡」
+            putTextCS(dc, gF30, RGB(255, 246, 200), RGB(18, 32, 20),
+      压字二 pvz.c:5177  墨迹(351,51 301x29) frame 「通关奖励 · 选一张翻开」
+            putTextCS(dc, gF30, RGB(255, 246, 200), RGB(18, 32, 20),
+  [ST_PLAY] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5765  墨迹(83,37 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_PLAY] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5764  墨迹(86,40 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+      压字二 pvz.c:5765  墨迹(85,39 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_PAUSE] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5765  墨迹(83,37 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_PAUSE] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5764  墨迹(86,40 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+      压字二 pvz.c:5765  墨迹(85,39 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_WIN] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5765  墨迹(83,37 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_WIN] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5764  墨迹(86,40 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+      压字二 pvz.c:5765  墨迹(85,39 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_LOSE] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5765  墨迹(83,37 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_LOSE] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5764  墨迹(86,40 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+      压字二 pvz.c:5765  墨迹(85,39 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_DRAFT] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5765  墨迹(83,37 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_DRAFT] 重叠比 92% · 重叠面积 624px²
+      压字一 pvz.c:5764  墨迹(86,40 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+      压字二 pvz.c:5765  墨迹(85,39 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(255, 252, 236), RGB(56, 38, 20), buf, 124, 30, 2);
+  [ST_PLAY] 重叠比 84% · 重叠面积 570px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5764  墨迹(84,38 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+  [ST_PAUSE] 重叠比 84% · 重叠面积 570px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5764  墨迹(84,38 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+  [ST_WIN] 重叠比 84% · 重叠面积 570px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5764  墨迹(84,38 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+  [ST_LOSE] 重叠比 84% · 重叠面积 570px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5764  墨迹(84,38 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+  [ST_DRAFT] 重叠比 84% · 重叠面积 570px²
+      压字一 pvz.c:5763  墨迹(82,36 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 123, 29, 2);
+      压字二 pvz.c:5764  墨迹(84,38 40x17) frame 「225」
+            putTextS(gFrameDC, gF22, RGB(38, 24, 10), RGB(38, 24, 10), buf, 125, 31, 2);
+  [ST_PLAY] 重叠比 37% · 重叠面积 285px²
+      压字一 pvz.c:2101  墨迹(134,125 65x22) frame 「向日葵」
+            putTextS(dc, gF22, RGB(44, 34, 20), RGB(255, 255, 255), pd->name,
+      压字二 pvz.c:2108  墨迹(131,142 60x13) frame 「普通植物」
+            putTextS(dc, gF15, RGB(140, 140, 130), RGB(255, 255, 255),
+  [ST_DRAFT] 重叠比 37% · 重叠面积 285px²
+      压字一 pvz.c:2101  墨迹(134,125 65x22) frame 「向日葵」
+            putTextS(dc, gF22, RGB(44, 34, 20), RGB(255, 255, 255), pd->name,
+      压字二 pvz.c:2108  墨迹(131,142 60x13) frame 「普通植物」
+            putTextS(dc, gF15, RGB(140, 140, 130), RGB(255, 255, 255),
+  [ST_DRAFT] 重叠比 36% · 重叠面积 360px²
+      压字一 pvz.c:4888  墨迹(86,157 72x14) frame 「神级 · 神话」
+            putTextS(dc, gF15, RGB(255, 255, 255), tint(rc, -0.5f), buf, x + 12.0f, y + 2.0f, 0);
+      压字二 pvz.c:2114  墨迹(51,166 182x13) frame 「阳光 46    冷却 f 秒    生命 f」
+            putTextS(dc, gF15, RGB(70, 60, 44), RGB(255, 255, 255), buf, tx + 12.0f, ty + 70.0f, 0);
+  [ST_DRAFT] 重叠比 33% · 重叠面积 462px²
+      压字一 pvz.c:4891  墨迹(167,195 66x21) frame 「世界树」
+            putTextCS(dc, gF22, RGB(255, 244, 214), RGB(40, 26, 60), plantDefs[pid].name,
+      压字二 pvz.c:4831  墨迹(51,188 255x14) frame 「左键选中后点草坪种下；右键取消选择」
+            putText(dc, f, c, buf, x, y + (float)lines * lh, 0);
+
+D. 真·出血（**可见**文字越出 1000x650，会被 DC 边缘裁掉）：2 类
+--------------------------------------------------------------------------------------------------
+  [ST_ACH] 最多越界 6px · pvz.c:5154  「已完成 6 / 20」
+        putTextS(dc, gF15, RGB(255, 226, 150), RGB(18, 32, 20), buf, 52.0f, 636.0f, 0);
+  [ST_LOADOUT] 最多越界 4px · pvz.c:5162  「已选候选 4 / 5　实战携带 4 株」
+        putTextCS(dc, gF22, sel >= gCandidateSlots ? RGB(180, 255, 150) : RGB(255, 226, 150),
+
+E. 坐标映射自检（框内找不到、整帧却找得到 -> 说明映射假设不成立）
+--------------------------------------------------------------------------------------------------
+      pvz.c:5763  5 帧  「225」

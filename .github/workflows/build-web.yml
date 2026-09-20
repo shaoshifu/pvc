@@ -1,0 +1,156 @@
+name: Build web (WASM) and deploy to Pages
+
+# 为什么构建放在 Actions 而不是本地：
+#   本机只有 MinGW gcc，没有 clang/wasm 目标；而 Emscripten 的工具链与
+#   Node 都从 storage.googleapis.com 下载 —— 该域名在本机环境**不可达**
+#   （沙箱内外都一样，已实测）。Actions 的 runner 网络不受此限制。
+#
+# 这个工作流做三件事，顺序刻意如此：
+#   ① 先用 **gcc** 跑一遍本机验证（编译 + 原语级比对 + 回归）
+#      —— 这一步和平台无关，能在**没有 Emscripten**的情况下先确认代码自洽；
+#         它会拦住 90% 的低级错误，让后面的 wasm 编译失败更容易定位。
+#   ② 再用 emcc 编 WASM
+#   ③ 部署到 GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:        # 允许手动触发（调试构建问题时很有用）
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─────────────────── ① 平台无关的自检（gcc）───────────────────
+      # 这一步**故意放在 emcc 之前**：它能在几十秒内告诉你
+      # "代码本身能不能编、逻辑有没有被改坏"，而不是等到几分钟的
+      # wasm 构建之后再对着一个含糊的 emcc 报错排查。
+      - name: 本机验证编译（gcc + 可移植分支）
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc libc6-dev
+          # 可移植分支与 wasm 共用同一份源码；这里先把语法与链接打通
+          gcc -DPLAT_PORTABLE -O1 -c pvz.c -o /tmp/pvz.o -Wall -Wextra
+          gcc -DPLAT_PORTABLE -O1 -c plat_web.c -o /tmp/plat_web.o -Wall -Wextra
+          echo "✓ 可移植分支编译通过（零告警）"
+
+      - name: 原语级跨平台比对（软件光栅 vs 无 GDI 参考）
+        run: |
+          set -e
+          # _ab_prim.c 是"纯原语"测试，不依赖 pvz.c。
+          # 在 Linux 上没有 gdi32，所以只跑软件光栅一侧 ——
+          # 目的是确认它**不崩且产出稳定**（真正的逐像素对照在 Windows 本地做）。
+          gcc -DPLAT_PORTABLE -O2 -o /tmp/abprim _ab_prim.c plat_web.c -lm \
+              -Wl,--allow-multiple-definition
+          /tmp/abprim
+          echo "✓ 软件光栅后端可运行"
+
+      # ─────────────────── ② Emscripten 构建 ───────────────────
+      - name: 安装 Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.61
+
+      - name: 核对资源（仓库里已是被裁剪过的）
+        run: |
+          set -e
+          # 仓库里的 assets/ 在 clone 后**就只是** PNG/JPG/sfx/bgm ——
+          # .gitignore 已排除 BMP 与 WAV 母版（约 334MB）。
+          # 所以这一步不需要"再裁一次"，只需要确认关键文件都在。
+          echo "资源总体积：$(du -sh assets | cut -f1)"
+          echo "PNG: $(ls assets/*.png 2>/dev/null | wc -l) 个"
+          echo "JPG: $(ls assets/*.jpg 2>/dev/null | wc -l) 个"
+          echo "音效: $(ls assets/sfx/*.wav 2>/dev/null | wc -l) 个"
+          echo "BGM: $(ls assets/bgm/*.mp3 2>/dev/null | wc -l) 个"
+          # 关键文件抽查：少一个都会让游戏静默缺素材
+          for f in assets/lawn.png assets/background.jpg assets/ui_menu_bg_v1.png \
+                   assets/rgplant_157.png assets/badge_primordial.png \
+                   assets/bgm_level1.mp3 assets/sfx/hit.wav; do
+            if [ -f "$f" ]; then echo "  ✓ $f"; else echo "  ✗ 缺失 $f"; exit 1; fi
+          done
+
+      - name: 编译 WASM
+        run: |
+          set -e
+          # ⚠️ 每个参数都有理由，改动前先读注释
+          #
+          # -DPLAT_PORTABLE
+          #     走可移植分支（plat.h 的 `_WIN32 && !PLAT_PORTABLE` 条件）。
+          #     顺带让 pvz.c 用 plat_d3d_stub.h 而不是真的 d3d9.h。
+          #
+          # --preload-file assets@/assets
+          #     把资源打进 .data 包并挂到虚拟路径 /assets。
+          #     引擎用相对路径 "assets/xxx.png" 就能读到（CWD 是 /）。
+          #     比"让 JS 侧一个个 fetch 再写进 FS"简单得多，也不会漏。
+          #     ⚠️ 用的是仓库根下的 assets/（clone 后已只含 PNG/JPG/sfx/bgm），
+          #        不是 web/assets —— 后者是早期的中间产物方案，现已废弃。
+          #
+          # -sFORCE_FILESYSTEM=1
+          #     引擎要用 fopen/GetFileAttributesW 读资源，必须带完整 FS。
+          #
+          # -sALLOW_MEMORY_GROWTH=1
+          #     引擎会为每张贴图 malloc，初始内存不够会直接 OOM。
+          #
+          # -sEXPORTED_FUNCTIONS
+          #     必须**精确列出**所有会被 JS 调用的函数，否则会被 DCE 优化掉。
+          #     漏一个的症状是运行时 "xxx is not a function"，
+          #     而且要等真正调用到那一步才出现（比如点了开始才发现点不动）。
+          #
+          # -sEXPORTED_RUNTIME_METHODS
+          #     ccall 用来调 C 函数；FS 用来读写存档；HEAPU32 用来把世界层
+          #     的像素搬到 canvas（外壳每帧都要用，这是性能关键路径）。
+          #
+          # --no-entry
+          #     PLAT_HAS_OWN_MAIN=0 时没有 main()，所以要显式声明无入口。
+          emcc -DPLAT_PORTABLE -O2 -I. \
+            -sWASM=1 \
+            -sALLOW_MEMORY_GROWTH=1 \
+            -sFORCE_FILESYSTEM=1 \
+            -sINITIAL_MEMORY=67108864 \
+            -sSTACK_SIZE=5242880 \
+            -sEXPORTED_FUNCTIONS='["_gameInitAll","_gameStep","_gamePointerMove","_gamePointerDown","_gamePointerUp","_handleKey","_gameArtCount","_platWebFrame","_platWebInit","_gameSetAssetDir","_gameSetDeterministic","_malloc","_free"]' \
+            -sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","FS","HEAPU32","HEAPU8","HEAPF32"]' \
+            --preload-file assets@/assets \
+            --no-entry \
+            -o web/pvz.js \
+            pvz.c plat_web.c
+
+          echo "--- 产物 ---"
+          ls -lh web/pvz.js web/pvz.wasm web/pvz.data
+
+      - name: 组装站点
+        run: |
+          set -e
+          cd web
+          # shell.js / index.html / shell.css 是仓库里的源文件，已在 web/ 下
+          # pvz.js / pvz.wasm / pvz.data 是上一步的产物
+          ls -1
+          # 加一个 .nojekyll：Pages 默认会跑 Jekyll，它会**忽略下划线开头的文件**，
+          # 而我们没有这类文件，但 Jekyll 处理 74MB 资源也很慢，直接跳过。
+          touch .nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

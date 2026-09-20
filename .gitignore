@@ -1,0 +1,141 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  .gitignore
+#
+#  原则：仓库只放**源码 + 发行所需资源**（约 74MB），
+#        不放大体积的中间产物（BMP/WAV 母版）与测试输出。
+#        原始 assets/ 有 375MB，其中约 300MB 是 BMP 母版、34MB 是 WAV。
+#
+#  ⚠️ 区分两类下划线文件，别用 `_*` 一把梭：
+#     `_add_web_audio.py` / `_test_cards50.c` / `_ab_scenario.h` —— 重要脚本与测试，**必须提交**；
+#     `_ab_win.raw` / `_prim_web_00.raw` / `_celeb/`              —— 测试输出，**不要提交**。
+#     所以下面按"扩展名 + 具体目录名"精确排除。
+#  ═══════════════════════════════════════════════════════════════════════
+
+# ---- 资源母版：是中间产物，可由脚本再生 ----
+# BMP 是未压缩母版（845 个、约 300MB），打包流程 art/_pack_assets.py 的**输入**。
+# 引擎在发行包里只读 PNG/JPG（spriteLoadName 先找 .png/.jpg，.bmp 只是兜底），
+# 所以删掉它们不影响游戏，但能让仓库从 375MB 降到 74MB。
+# 需要时用 `python art/_pack_assets.py --png-only` 重新导出。
+assets/*.bmp
+# WAV 同理：bgm_level1.wav 有 34MB，已转成 3.1MB 的 .mp3 归档（同源同曲）。
+assets/*.wav
+assets/bgm/*.wav
+
+# ---- 生成物：由脚本/Actions 产出，不入库 ----
+web/assets/
+web/pvz.js
+web/pvz.wasm
+web/pvz.data
+web/pvz.worker.js
+web/.nojekyll
+
+# ---- 编译产物与测试可执行文件 ----
+*.exe
+*.o
+*.obj
+*.dll
+*.pdb
+_dump.c
+
+# ---- 测试与抓帧输出（每次都不一样，提交没有意义）----
+_frames*/
+_assetbits/
+*.log
+*.raw
+*.bmp.bak
+# 抓帧输出目录（每个都有明确的生成脚本）
+_ab/
+_abfx/
+_celeb/
+_celeb2/
+_celeb3/
+_cardshot/
+_cardshot2/
+_cardshot3/
+_cardshot4/
+_cardshot5/
+_cardshot6/
+_cardshot7/
+_cardshot8/
+_cardshot9/
+_fr_new/
+_fr_old/
+_e0/
+_e4/
+_e6/
+_e7/
+_d0/
+_d1/
+_d2/
+_d3/
+_fx_proc/
+_fx_mmx/
+_bak50/
+_bak_units/
+_sfxchk/
+# 抓帧产生的零散图片（**注意**：只匹配下划线开头的，不碰 assets/ 与 art/ 下的正式素材）
+_alpha_test.png
+_aoe_*.png
+_base_ref.png
+_shot_*.png
+_v2_*.png
+_badges*.png
+_badge*.png
+_zoom*.png
+_cmp_*.png
+_fx_*.png
+_final_*.png
+_card_full.png
+_prim_sbs.png
+_ab_*.png
+_web_frame.png
+
+# ---- 存档与临时数据 ----
+pvz_save.dat
+pvz_save.dat.*
+_*_save.dat
+_bak_save_*.dat
+_balance_test_save.dat
+_back_test.dat
+
+# ---- 备份（源码快照，本地保留即可）----
+*.bak-*
+
+# ---- Python / 编辑器 ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ⚠️ 下面这两组是 2026-09-21 网页版上线时补的。
+#     原因：仓库一看有 337MB —— assets 只有 74MB，剩下 263MB 全在
+#     art/ 的子目录与根目录的抓帧图里，都是**素材生产过程的产物**。
+#     它们可以随时用 art/ 下的脚本重新生成，没必要进仓库。
+#     排除后仓库从 337MB 降到约 85MB。
+# ═══════════════════════════════════════════════════════════════════════
+
+# ---- 素材生产的中间产物（art/ 下的原始出图、抠图中间态、拼版预览）----
+# art/ 顶层的 .py 脚本是**重要资产**（可再生的唯一途径），所以只排除
+# 子目录与图片，绝不用 `art/*` 一把梭。
+art/raw/
+art/raw_ui/
+art/gen2/
+art/gen_fx/
+art/processed_ui/
+art/__pycache__/
+art/*.png
+art/*.jpg
+
+# ---- 抓帧 / 预览 / 诊断产物 ----
+# 根目录与 art/ 下所有 `_` 开头或 `preview` 开头的图/表，都是跑测试或
+# 诊断脚本的产物（每次都不一样）。assets/ 与 art/ 的正式素材都不以
+# `_` 开头，所以这条不会误伤它们。
+preview*.png
+_*.png
+_*.tsv
+_*.raw

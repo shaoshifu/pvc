@@ -1,0 +1,253 @@
+/* =========================================================================
+   shell.css —— 网页版外壳样式（面向 iPad）
+   -------------------------------------------------------------------------
+   三条贯穿全篇的原则：
+
+   ① **画面永远不裁切**。游戏是 1000×650（接近 3:2），iPad 有 4:3、有 1.43，
+      比例都对不上。所以 canvas 用 `object-fit: contain` 式的等比缩放
+      （这里手写，因为要同时控制安全区），多出来的地方留黑边。
+      绝不用 `cover` —— 那会把两边的草坪切掉，而草坪边缘正是"僵尸从哪来"
+      的信息所在。
+
+   ② **可点元素不小于 44×44 pt**（Apple HIG 的下限）。
+      屏幕快捷键按 44 做；游戏内的卡片本身够大，但小图标走热区外扩
+      （在 shell.js 的 mapPointer 里做，不在这里改视觉）。
+
+   ③ **安全区一律用 env(safe-area-inset-*)**。
+      iPad 横屏时左右会有圆角与指示条，不避开的话按钮会被切掉一半。
+   ========================================================================= */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0b120d;                 /* 与游戏草坪暗部同色系，黑边不突兀 */
+    color: #e8f0e4;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    /* 触摸设备的默认行为在这里全部关掉：
+       长按弹菜单、双击缩放、拖动滚动、选中文字 —— 任何一个漏掉都会
+       在游戏里变成"操作失灵"。 */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    overscroll-behavior: none;
+    position: fixed;
+    inset: 0;
+}
+
+/* ─────────────────────────── 画布舞台 ─────────────────────────── */
+.stage {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 安全区：横屏时左右会缩进，避免圆角切到画面边缘的 UI */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    overflow: hidden;
+}
+
+#screen {
+    display: block;
+    /* 关键：像素尺寸恒为 2000×1300（引擎世界层），显示尺寸由 JS 算。
+       这里只保证不模糊、不拉伸变形。 */
+    image-rendering: auto;
+    transform-origin: center center;
+    background: #000;
+}
+
+/* ─────────────────────────── 加载遮罩 ─────────────────────────── */
+.boot {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: radial-gradient(circle at 50% 40%, #17281b 0%, #0a110c 70%);
+    transition: opacity .35s ease;
+}
+.boot.gone { opacity: 0; pointer-events: none; }
+
+.boot-card {
+    width: min(420px, 88vw);
+    text-align: center;
+}
+
+.boot-title {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #ffe9a8;
+    text-shadow: 0 2px 0 #6b4a12, 0 0 22px rgba(255,210,90,.32);
+}
+
+.boot-sub {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #9fb59a;
+    letter-spacing: 1px;
+}
+
+.boot-prog {
+    margin: 26px 0 10px;
+    height: 10px;
+    border-radius: 6px;
+    background: #223122;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.5);
+}
+.boot-prog-bar {
+    height: 100%;
+    width: 0%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #7ed957, #b6f06a);
+    transition: width .18s linear;
+}
+
+.boot-msg {
+    font-size: 13px;
+    color: #b9cdb4;
+    min-height: 20px;
+}
+
+.boot-btn {
+    margin-top: 22px;
+    /* 44pt 是 HIG 的触摸下限，这里给到 52 更好按 */
+    min-width: 180px;
+    min-height: 52px;
+    padding: 0 26px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #14301a;
+    background: linear-gradient(180deg, #b8f06e, #7cc63f);
+    border: 2px solid #4e8c26;
+    border-radius: 14px;
+    box-shadow: 0 4px 0 #3c6b1d, 0 6px 18px rgba(0,0,0,.35);
+    touch-action: manipulation;
+}
+.boot-btn:disabled { filter: grayscale(.55) brightness(.8); box-shadow: 0 4px 0 #2a2a2a; }
+.boot-btn:not(:disabled):active { transform: translateY(3px); box-shadow: 0 1px 0 #3c6b1d; }
+
+.boot-hint {
+    margin-top: 14px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #8ea489;
+}
+
+/* ─────────────────────────── 竖屏提示 ─────────────────────────── */
+.rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(6, 12, 8, .82);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+.rotate-card {
+    width: min(360px, 86vw);
+    padding: 26px 22px 20px;
+    text-align: center;
+    background: #17281b;
+    border: 2px solid #33512f;
+    border-radius: 18px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.5);
+}
+.rotate-icon { font-size: 40px; color: #b8f06e; }
+.rotate-title { margin-top: 8px; font-size: 19px; font-weight: 700; color: #eaf6e2; }
+.rotate-desc  { margin-top: 8px; font-size: 13px; color: #9fb59a; }
+.rotate-actions { margin-top: 20px; display: flex; gap: 10px; }
+.rb {
+    flex: 1;
+    min-height: 48px;
+    font-size: 15px;
+    color: #d8e8d2;
+    background: #24391f;
+    border: 2px solid #3f6136;
+    border-radius: 12px;
+    touch-action: manipulation;
+}
+.rb-primary {
+    color: #14301a;
+    background: linear-gradient(180deg, #b8f06e, #7cc63f);
+    border-color: #4e8c26;
+    font-weight: 600;
+}
+.rb:active { transform: translateY(2px); }
+
+/* ─────────────────────────── 屏幕快捷键 ─────────────────────────── */
+.keys {
+    position: fixed;
+    z-index: 40;
+    left: calc(env(safe-area-inset-left) + 10px);
+    bottom: calc(env(safe-area-inset-bottom) + 10px);
+    display: flex;
+    gap: 8px;
+}
+.kb {
+    /* 44×44 是 HIG 下限；这里做到 46 让斜按也能中 */
+    width: 46px;
+    height: 46px;
+    font-size: 19px;
+    line-height: 1;
+    color: #dff0d6;
+    background: rgba(24, 40, 26, .74);
+    border: 2px solid rgba(120, 180, 110, .5);
+    border-radius: 12px;
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    touch-action: manipulation;
+}
+.kb:active {
+    background: rgba(120, 200, 100, .82);
+    color: #10260f;
+    transform: translateY(2px);
+}
+
+/* ─────────────────────────── 诊断条 ─────────────────────────── */
+.diag {
+    position: fixed;
+    z-index: 60;
+    top: calc(env(safe-area-inset-top) + 6px);
+    left: calc(env(safe-area-inset-left) + 6px);
+    max-width: min(78vw, 560px);
+    padding: 8px 10px;
+    font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #cfe8c6;
+    background: rgba(8, 16, 10, .8);
+    border: 1px solid #33512f;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    pointer-events: none;
+}
+
+/* ─────────────────────────── 横屏 / 竖屏细节 ───────────────────────────
+   横屏（主力形态）：画面铺满，仍留安全区。
+   竖屏：同样铺满，但按钮往上挪一点 —— 竖屏时 Home 指示条与画面底部
+         更容易打架，底部的快捷键会被手指误触。 */
+@media (orientation: portrait) {
+    .keys {
+        bottom: calc(env(safe-area-inset-bottom) + 16px);
+        /* 竖屏时画面下方的大片区域是黑边（画面按宽度铺满、高度富裕），
+           所以按钮放这里不会挡到游戏内容 —— 这是刻意的。 */
+    }
+}
+
+/* 小屏（iPhone）时缩一档，避免按钮占掉太多横向空间 */
+@media (max-width: 700px) {
+    .kb { width: 42px; height: 42px; font-size: 17px; border-radius: 10px; }
+    .keys { gap: 6px; }
+    .boot-title { font-size: 25px; }
+}

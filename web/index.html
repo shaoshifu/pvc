@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- ══════════════════════════════════════════════════════════════════════
+     iOS / iPad 专用 meta。每一条都有具体理由，不是模板抄来的：
+
+     viewport-fit=cover
+       让页面铺到 iPhone/iPad 的圆角与 Home 指示条区域。
+       不用它的话，安全区之外是黑边；用了它才能配合
+       env(safe-area-inset-*) 把 UI 摆到安全区内。
+
+     user-scalable=no + maximum-scale=1
+       iPad Safari 默认允许双指缩放与双击放大。游戏里这会让
+       "点卡片"偶尔变成"放大页面"，而且放大后坐标映射全乱。
+       ⚠️ 光靠这个 meta 在 iOS 上**不总是生效**，所以 shell.js 里
+          同时拦了 gesturestart / dblclick（双保险）。
+
+     apple-mobile-web-app-capable + status-bar-style
+       从主屏幕启动时全屏（去掉 Safari 地址栏），否则顶部会一直占一条，
+       横屏时那条地址栏会让画面上下都缺一块。
+
+     apple-mobile-web-app-title
+       加到主屏幕后的名字。
+     ═══════════════════════════════════════════════════════════════ -->
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="植物大战僵尸">
+<meta name="theme-color" content="#0f1a12">
+<meta name="format-detection" content="telephone=no">
+<title>植物大战僵尸 · 网页版</title>
+<link rel="stylesheet" href="shell.css">
+</head>
+<body>
+
+<!-- ─────────────── 加载遮罩 ───────────────
+     首次进入要下约 50MB 资源（贴图 + 音效）。
+     没有进度反馈的话玩家会以为"卡住了"直接退出。
+     #bootBtn 同时也是**音频解锁按钮** —— iOS 要求
+     "用户手势之后"才能创建/恢复 AudioContext，
+     没有这一步全程静音。 -->
+<div id="boot" class="boot">
+  <div class="boot-card">
+    <h1 class="boot-title">植物大战僵尸</h1>
+    <p class="boot-sub">C 语言复刻版 · 网页版</p>
+
+    <div id="bootProgWrap" class="boot-prog" hidden>
+      <div id="bootProgBar" class="boot-prog-bar"></div>
+    </div>
+    <p id="bootMsg" class="boot-msg">准备中…</p>
+
+    <button id="bootBtn" class="boot-btn" disabled>载入中…</button>
+    <p id="bootHint" class="boot-hint"></p>
+  </div>
+</div>
+
+<!-- ─────────────── 竖屏提示 ───────────────
+     游戏 UI 是按横向 1000×650 设计的。竖屏仍可玩（按宽度铺满），
+     但会局促 —— 所以给一个**可关闭**的提示，而不是直接禁用。
+     关掉之后不再出现（本次会话内）。 -->
+<div id="rotateHint" class="rotate-hint" hidden>
+  <div class="rotate-card">
+    <div class="rotate-icon">⟳</div>
+    <p class="rotate-title">横屏体验更好</p>
+    <p class="rotate-desc">把 iPad 横过来，画面会铺满整屏</p>
+    <div class="rotate-actions">
+      <button id="rotateOk" class="rb rb-primary">知道了</button>
+      <button id="rotatePlay" class="rb">竖屏继续玩</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────── 游戏画布 ───────────────
+     canvas 的**像素尺寸**恒为 2000×1300（= 引擎世界层，逻辑 1000×650 × SS 2），
+     **显示尺寸**由 CSS 按"等比铺满 + 居中"算。
+     这样 iPad 各种分辨率（1180×820 / 1194×834 / 1366×1024）都不用改引擎，
+     缩放交给浏览器的 GPU 合成 —— 见 shell.js 的 layout()。 -->
+<div id="stage" class="stage">
+  <canvas id="screen" width="2000" height="1300"></canvas>
+</div>
+
+<!-- ─────────────── 屏幕快捷键 ───────────────
+     桌面端用键盘：空格=暂停 / W=落雷 / M=天气 / E=特效 / 1-8=编组 / F=全屏。
+     iPad 没键盘，所以把这几个最常用的做成按钮。
+     ⚠️ 走的是**同一个** handleKey()（见 pvz.c 的注释），
+        不是另写一套逻辑 —— 否则桌面按键与屏幕按钮的行为迟早会分叉。
+     位置固定在左下角、避开安全区。 -->
+<nav id="keys" class="keys" hidden>
+  <button class="kb" data-key="32"  title="暂停 / 继续">⏸</button>
+  <button class="kb" data-key="87"  title="落雷（W）">⚡</button>
+  <button class="kb" data-key="77"  title="切换天气（M）">☁</button>
+  <button class="kb" data-key="69"  title="切换特效（E）">✨</button>
+  <button class="kb" data-key="70"  title="全屏（F）">⛶</button>
+</nav>
+
+<!-- ─────────────── 诊断条（仅 ?debug=1 时显示）─────────────── -->
+<div id="diag" class="diag" hidden></div>
+
+<script src="shell.js"></script>
+</body>
+</html>
