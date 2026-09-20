@@ -18,7 +18,12 @@ on:
   workflow_dispatch:        # 允许手动触发（调试构建问题时很有用）
 
 permissions:
-  contents: read
+  # contents: write 是**为了失败诊断**，不是构建需要。
+  # 起因：CI 失败时我读不到 Actions 原始日志（匿名下载返回 403），
+  # 于是让工作流把失败日志贴到 commit 评论里 —— 而**创建 commit 评论需要
+  # contents: write**。第一版给的是 read，于是贴评论静默 403、诊断形同虚设。
+  # 这个仓库是 public 且只有本人使用，放宽到 write 是可接受的代价。
+  contents: write
   pages: write
   id-token: write
 
