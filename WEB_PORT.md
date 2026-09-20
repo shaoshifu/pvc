@@ -430,6 +430,65 @@ BGM（20MB）走 HTMLAudio 按 URL 流式，不占 wasm 内存、支持边下边
 
 ---
 
+## 6.6 ★ P3 + P4 结果：音频桥接、iPad 外壳、端到端验证
+
+### 已完成
+
+| 模块 | 内容 |
+|---|---|
+| **音频桥接** | `plat_web.c` 里的 MCI 状态机（别名表 + 6 个动词）+ Web Audio |
+| **iPad 外壳** | `web/index.html` / `shell.css` / `shell.js`（约 1000 行） |
+| **端到端验证** | `_test_web_shell.py`，Playwright 模拟 iPad 视口，**35 条断言全过** |
+| **CI** | `.github/workflows/build-web.yml`（gcc 自检 → emcc → 部署 Pages） |
+
+**音频分工**（刻意的）：音效（1.3MB）走 MEMFS + Web Audio，低延迟；
+BGM（20MB）走 HTMLAudio 按 URL 流式，不占 wasm 内存、支持边下边播。
+
+### 端到端验证覆盖的场景
+
+在 **iPad Pro 11 横屏 1194×834** 与 **竖屏 834×1194** 两种视口下各跑一遍：
+
+- 页面加载无 JS 错误；启动按钮可用
+- canvas 像素尺寸恒为 2000×1300（与引擎世界层一致）
+- 显示比例保持 1.538（**不裁切**），黑边上下/左右均匀（居中）
+- **真实帧注入**：把真后端导出的世界层灌进模拟堆，验证整条管线
+  （真像素 → HEAPU32 → BGRA→RGBA + alpha=255 → putImageData → canvas）
+  - 暗部占比 11%（确实有内容，不是全黑）
+  - alpha 不透明占比 100%（外壳正确补了 alpha）
+  - **G=110 > B=41**（草坪是绿的 → 通道顺序正确，无 R/B 互换）
+- 触摸点按 → `gamePointerDown(500,325)`（逻辑坐标精确）
+- 长按 250ms → 触发悬停、**不**触发点击
+- 拖动 → **不**触发点击
+- 屏幕快捷键 → `handleKey(32)`
+- 竖屏 → 出现"横屏体验更好"提示，且可关闭
+- 旋转到竖屏 → 提示重新出现，且中心点仍映射到 (500,325)
+
+### 这一步抓到的两个真 bug（都靠浏览器实测才发现）
+
+1. **`[hidden]` 被 `display:flex` 覆盖 —— 横屏时游戏完全点不动。**
+   `#rotateHint` 是 `display:flex`，它把 HTML 的 `hidden` 默认样式
+   （`display:none`）盖掉了。于是横屏时那个"提示层"虽然不可见，
+   却仍然铺满整屏、**吃掉所有触摸**。
+   截图上看一切正常 —— 只有自动化点击才暴露（Playwright 报
+   "intercepting pointer events"）。已加 `[hidden] { display:none !important }`。
+   > 同类问题还波及 `#keys`：启动页还没点"开始"，快捷键按钮就显示出来了。
+
+2. **`checkOrientation()` 里的 `if (!running) return` 让竖屏提示永远不出现。**
+   `startGame()` 是"先调 checkOrientation()、再置 running = true"，
+   所以那一句直接短路了整个提示逻辑。
+   这类**顺序依赖**的 bug 读代码很难发现。
+
+### 仓库与构建
+
+- 本地仓库已就绪：`main` 分支，**81.6 MiB / 1157 文件**
+  （从 337MB 裁下：排除 BMP/WAV 母版与 `art/` 下的素材生产中间产物）
+- Actions 工作流：先 gcc 自检（几十秒，能拦住 90% 的低级错误）
+  → 再 emcc 构建 → 部署 Pages
+- **待办**：connector 的 GitHub 授权**不含建仓库权限**（`POST /user/repos`
+  返回 403 `Resource not accessible by integration`），需要手动建一次仓库。
+
+---
+
 ## 7. 不做的事（明确边界）
 
 - **不改游戏逻辑与数值**：158 张卡、抽卡概率、始祖强度、7 档音乐，一行不动
