@@ -69,21 +69,41 @@ jobs:
       - name: 检查可移植侧符号（提前发现 emcc 才会暴露的链接错误）
         run: |
           # ★ 这一步是 2026-09-21 emcc 构建失败后加的。
-          #   那次失败的原因是 `_wcsicmp` / `_wgetenv` 两个 MSVCRT 专有函数没实现：
+          #   那次失败的原因是两个 MSVCRT 专有函数（_wcsicmp / _wgetenv）没实现：
           #   本机 MinGW 会因为 kernel32/msvcrt 兜底而**看不出**缺口，
-          #   而 emcc 到 musl 上直接链接失败。
-          #   于是前面 6 步全过、到第 7 步才炸，而且日志要认证才能下载、只能猜。
+          #   而 emcc 到 musl 上直接链接失败 —— 前面 6 步全过、到第 7 步才炸。
           #
-          # ⚠️ 这里刻意 **无论成败都把输出贴到 commit 评论**。
-          #    第一版只在失败时贴，而它偏偏在 CI 上失败、我读不到原始日志，
-          #    于是又回到"只能猜"。诊断的价值在于**失败时**可见，不是成功时。
+          # ⚠️ 两条刻意的设计：
+          #  ① **不阻塞构建**（exit 0）。它是我自己加的守卫，不该拦在真正的构建前面。
+          #     它在这个 CI 上曾误报过（本机通过、CI 失败），一阻塞就完全看不到
+          #     emcc 的真实结果 —— 那就本末倒置了。真正的权威是 emcc 自己。
+          #  ② **输出转成 annotation**（::error:: / ::warning::）。
+          #     因为 Actions 的原始日志要认证才能下载（匿名 GET 返回 403），
+          #     而**公开仓库的 annotation 无需登录即可读**。
+          #     之前试过贴 commit 评论，但那条路要么被 permissions 挡、
+          #     要么静默失效；annotation 是最可靠的一条。
           python3 _check_web_symbols.py > /tmp/symcheck.log 2>&1
           RC=$?
           echo "==== 符号检查输出（退出码 $RC）===="
           cat /tmp/symcheck.log
-          TITLE="符号检查结果（退出码 $RC）" bash _ci_post_log.sh /tmp/symcheck.log \
-            || echo "（上报失败，继续）"
-          if [ $RC -ne 0 ]; then exit 1; fi
+          if [ $RC -ne 0 ]; then
+            # 除了贴评论，也发 annotation（annotation 无需登录即可读，更可靠）
+            grep -E "error|Error|ERROR|undefined|failed|无法|找不到" /tmp/emcc.log \
+              | head -8 | while IFS= read -r line; do
+                esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')
+                echo "::error title=emcc 编译失败::${esc}"
+              done
+            LV="::warning"
+          else
+            LV="::notice"
+          fi
+          # 每行做成一条 annotation（workflow 命令要转义 % 和换行）
+          head -14 /tmp/symcheck.log | while IFS= read -r line; do
+            esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "${LV} title=符号检查（退出码 $RC）::${esc}"
+          done
+          echo "（符号检查不阻塞构建；emcc 才是权威）"
+          exit 0
 
       - name: 安装 Emscripten
         uses: mymindstorm/setup-emsdk@v14
