@@ -75,7 +75,16 @@ done
 rm -f _rb_chk.bin
 
 echo
-echo "=== ④ 资源核对 ==="
+echo "=== ④ 可移植侧符号检查 ==="
+if "$PYTHON_BIN" _check_web_symbols.py --quiet >/dev/null 2>&1; then
+    echo "  PASS"
+else
+    echo "  ★ FAIL（跑 python _check_web_symbols.py 看是哪个符号）"
+    fail=$((fail+1))
+fi
+
+echo
+echo "=== ⑤ 资源核对 ==="
 if "$PYTHON_BIN" _verify_assets.py --quiet >/dev/null 2>&1; then
     echo "  PASS"
 else

@@ -1452,6 +1452,83 @@ FILE *_wfopen(const wchar_t *path, const wchar_t *mode)
 }
 #endif  /* !_WIN32 */
 
+/* ---- MSVCRT 专有函数 ----------------------------------------------------------
+   ★★ 这一组是 2026-09-21 emcc 构建失败后补上的，值得说明为什么本地没发现。
+
+      下面这几个名字（`_wcsicmp` / `_wgetenv` / `_wcsnicmp` / `_wputenv` / `_stricmp`）
+      都是 **MSVCRT 专有**的，标准 C 与 musl（Emscripten 的 libc）里**都没有**。
+
+      本机用 MinGW 链接时，kernel32/msvcrt 会自动提供它们 ——
+      于是 `_build_web_local.sh` 一路绿灯，看起来"可移植侧已经完整"。
+      而 emcc 到 musl 上没有这些符号，**链接期直接失败**。
+
+      这就是"本地过、目标平台失败"的经典形态：本机的系统库把缺口盖住了。
+      靠编译告警发现不了（`-c` 只编不链），只能靠**检查链接期符号**。
+
+      → 已把它做成自动化检查：`_check_web_symbols.py`
+        （用 nm 求“未定义 − 已定义 − 标准库”的差集，
+         任何残留的非标准符号都会让 CI 提前失败并指名道姓报出来）
+      → 这条检查加进了 workflow 与 _regress.sh，所以以后不会再重演。 */
+
+/* 宽字符的大小写不敏感比较。引擎用它判断 BGM 扩展名（".mp3"/".m4a"）
+   与 MCI 状态（"stopped"），所以行为和返回值必须和 MSVCRT 一致：
+   返回 0 表示相等，负数/正数表示大小关系。 */
+int _wcsicmp(const wchar_t *a, const wchar_t *b)
+{
+    if (!a || !b) return a ? 1 : (b ? -1 : 0);
+    while (*a && *b) {
+        wchar_t ca = *a, cb = *b;
+        if (ca >= L'A' && ca <= L'Z') ca = (wchar_t)(ca - L'A' + L'a');
+        if (cb >= L'A' && cb <= L'Z') cb = (wchar_t)(cb - L'A' + L'a');
+        if (ca != cb) return (int)ca - (int)cb;
+        a++; b++;
+    }
+    return (int)*a - (int)*b;
+}
+
+int _wcsnicmp(const wchar_t *a, const wchar_t *b, size_t n)
+{
+    size_t i;
+    if (!a || !b) return a ? 1 : (b ? -1 : 0);
+    for (i = 0; i < n; i++) {
+        wchar_t ca = a[i], cb = b[i];
+        if (ca >= L'A' && ca <= L'Z') ca = (wchar_t)(ca - L'A' + L'a');
+        if (cb >= L'A' && cb <= L'Z') cb = (wchar_t)(cb - L'A' + L'a');
+        if (ca != cb) return (int)ca - (int)cb;
+        if (!ca) break;
+    }
+    return 0;
+}
+
+/* 窄字符版（引擎里没用到，但补上成本为零，且能挡住以后有人加代码时踩同一个坑） */
+int _stricmp(const char *a, const char *b)
+{
+    if (!a || !b) return a ? 1 : (b ? -1 : 0);
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) return (int)ca - (int)cb;
+        a++; b++;
+    }
+    return (int)*a - (int)*b;
+}
+
+/* 环境变量：wasm 里没有进程环境，**返回 NULL 就是正确行为**。
+   引擎的 savePath() 逻辑是「有 PVZ_SAVE_FILE 就用它，否则用默认的 pvz_save.dat」，
+   返回 NULL → 走默认相对路径 → 在 MEMFS 里就是 /pvz_save.dat，
+   与外壳 shell.js 读写的路径一致。
+   ⚠️ 不要"为了让它找到文件"而返回一个自造路径：那会让引擎以为环境变量被设置过，
+      一旦哪天有人改了默认路径，两处就会不一致。 */
+wchar_t *_wgetenv(const wchar_t *name)
+{
+    (void)name;
+    return NULL;
+}
+
+/* 设置环境变量：wasm 里没有意义，但要保证符号存在（外壳里的测试代码会用） */
+int _wputenv(const wchar_t *envstr) { (void)envstr; return 0; }
+
 BOOL GetClientRect(HWND hwnd, RECT *rc)
 {
     (void)hwnd;

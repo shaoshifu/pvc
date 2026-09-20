@@ -404,6 +404,17 @@ int      wsprintfW(wchar_t *out, const wchar_t *fmt, ...);
    本机用 -DPLAT_PORTABLE 验证时若再声明一次，会报 -Wattributes 警告。 */
 FILE    *_wfopen(const wchar_t *path, const wchar_t *mode);
 #endif
+
+/* ---- MSVCRT 专有函数（标准 C 与 musl 都没有）----
+   ★ 这一组漏一个，本机（MinGW）也能链上 —— 因为 kernel32/msvcrt 会兜底；
+     但 emcc 到 musl 上就会**链接失败**。属于"本地过、目标平台失败"的经典形态。
+     清单由 `_check_web_symbols.py` 实测得出（nm 求差集），加进了 CI。
+     ⚠️ 以后在 pvz.c 里用到任何 `_` 开头的 libc 风格函数，都要先跑一次那个脚本。 */
+int      _wcsicmp(const wchar_t *a, const wchar_t *b);
+int      _wcsnicmp(const wchar_t *a, const wchar_t *b, size_t n);
+int      _stricmp(const char *a, const char *b);
+wchar_t *_wgetenv(const wchar_t *name);
+int      _wputenv(const wchar_t *envstr);
 BOOL     GetClientRect(HWND hwnd, RECT *rc);
 /* ★ GdiFlush：GDI 会把绘制**批处理**在内部命令缓冲里，不一定立刻落到 DIB 位。
    任何"画完立刻读位图"的代码（抓帧、逐像素比对）都必须先调它，
