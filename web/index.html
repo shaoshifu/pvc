@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
+<html lang="zh-CN" data-page-node-id="xgYx6Fk67adtMxFFH2fUoU">
+<head data-page-node-id="TKh9MpCOEJeO2v2oBPVHi5">
+<meta charset="utf-8" data-page-node-id="mjQcwkFe0ffPBpU6yjC9H8">
 <!-- ══════════════════════════════════════════════════════════════════════
      iOS / iPad 专用 meta。每一条都有具体理由，不是模板抄来的：
 
@@ -24,17 +24,17 @@
        加到主屏幕后的名字。
      ═══════════════════════════════════════════════════════════════ -->
 <meta name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="植物大战僵尸">
-<meta name="theme-color" content="#0f1a12">
-<meta name="format-detection" content="telephone=no">
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" data-page-node-id="boetkCtwaAqc8NifYRXGTc">
+<meta name="apple-mobile-web-app-capable" content="yes" data-page-node-id="dHblAJtErj3RoZLjOzcPiG">
+<meta name="mobile-web-app-capable" content="yes" data-page-node-id="6W6C5KAc5FTHHS1olXOevE">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" data-page-node-id="AOwrnkLd3nh4CrYFNzRbhX">
+<meta name="apple-mobile-web-app-title" content="植物大战僵尸" data-page-node-id="kck78OC70jxXDb94ABqbyU">
+<meta name="theme-color" content="#0f1a12" data-page-node-id="BLmHCvyIIYDwbKckT7mC2a">
+<meta name="format-detection" content="telephone=no" data-page-node-id="3SGFgVcpbZ2O5c12DZ08uE">
 <title>植物大战僵尸 · 网页版</title>
-<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="shell.css" data-page-node-id="wCaxeQUe3HBXoxZkc3PQ7H">
 </head>
-<body>
+<body data-page-node-id="cHCu9Q2UEkbOAPH61PTmkf">
 
 <!-- ─────────────── 加载遮罩 ───────────────
      首次进入要下约 50MB 资源（贴图 + 音效）。
@@ -42,18 +42,18 @@
      #bootBtn 同时也是**音频解锁按钮** —— iOS 要求
      "用户手势之后"才能创建/恢复 AudioContext，
      没有这一步全程静音。 -->
-<div id="boot" class="boot">
-  <div class="boot-card">
-    <h1 class="boot-title">植物大战僵尸</h1>
-    <p class="boot-sub">C 语言复刻版 · 网页版</p>
+<div id="boot" class="boot" data-page-node-id="wTGSD3Wl3nSKz515t2Hxf1">
+  <div class="boot-card" data-page-node-id="OL9h4V4GLdi6UYRziljnnZ">
+    <h1 class="boot-title" data-page-node-id="WDdFO7NnGDPEgaJXlOjbVY">植物大战僵尸</h1>
+    <p class="boot-sub" data-page-node-id="qzdbRcuJ0EQE3kQWNondKV">C 语言复刻版 · 网页版</p>
 
-    <div id="bootProgWrap" class="boot-prog" hidden>
-      <div id="bootProgBar" class="boot-prog-bar"></div>
+    <div id="bootProgWrap" class="boot-prog" hidden data-page-node-id="M9jcgFPWeu4yUZ22cfq5GP">
+      <div id="bootProgBar" class="boot-prog-bar" data-page-node-id="Ks4WxiHpTHEYfYpVUnJeFB"></div>
     </div>
-    <p id="bootMsg" class="boot-msg">准备中…</p>
+    <p id="bootMsg" class="boot-msg" data-page-node-id="qDYDuWqkZmbXelUjQyIF7g">准备中…</p>
 
-    <button id="bootBtn" class="boot-btn" disabled>载入中…</button>
-    <p id="bootHint" class="boot-hint"></p>
+    <button id="bootBtn" class="boot-btn" disabled data-page-node-id="qoejeHoZ01WIEvIt8JgBYk">载入中…</button>
+    <p id="bootHint" class="boot-hint" data-page-node-id="iCkonhOJBAIKInGoCXia8E"></p>
   </div>
 </div>
 
@@ -61,14 +61,14 @@
      游戏 UI 是按横向 1000×650 设计的。竖屏仍可玩（按宽度铺满），
      但会局促 —— 所以给一个**可关闭**的提示，而不是直接禁用。
      关掉之后不再出现（本次会话内）。 -->
-<div id="rotateHint" class="rotate-hint" hidden>
-  <div class="rotate-card">
-    <div class="rotate-icon">⟳</div>
-    <p class="rotate-title">横屏体验更好</p>
-    <p class="rotate-desc">把 iPad 横过来，画面会铺满整屏</p>
-    <div class="rotate-actions">
-      <button id="rotateOk" class="rb rb-primary">知道了</button>
-      <button id="rotatePlay" class="rb">竖屏继续玩</button>
+<div id="rotateHint" class="rotate-hint" hidden data-page-node-id="Dq9j9BG1olV54ByOcUuBKR">
+  <div class="rotate-card" data-page-node-id="to3Amz7sCTSJQBHbb5GmBH">
+    <div class="rotate-icon" data-page-node-id="eB7ZlbfAZexjCdyPnY80ID">⟳</div>
+    <p class="rotate-title" data-page-node-id="PH8gN8FgVVG5irk0EmfAw5">横屏体验更好</p>
+    <p class="rotate-desc" data-page-node-id="ueWfynGVjm6tfRBdAcoVI2">把 iPad 横过来，画面会铺满整屏</p>
+    <div class="rotate-actions" data-page-node-id="6OrjtzLHbGy6I4nQwmhMvy">
+      <button id="rotateOk" class="rb rb-primary" data-page-node-id="N3NSu0FcuHMMatbG3fWjx0">知道了</button>
+      <button id="rotatePlay" class="rb" data-page-node-id="qA0OWb8oI1tsFnc8C6NGiH">竖屏继续玩</button>
     </div>
   </div>
 </div>
@@ -78,8 +78,8 @@
      **显示尺寸**由 CSS 按"等比铺满 + 居中"算。
      这样 iPad 各种分辨率（1180×820 / 1194×834 / 1366×1024）都不用改引擎，
      缩放交给浏览器的 GPU 合成 —— 见 shell.js 的 layout()。 -->
-<div id="stage" class="stage">
-  <canvas id="screen" width="2000" height="1300"></canvas>
+<div id="stage" class="stage" data-page-node-id="zKxTzCe8GI93yIajSaQzBZ">
+  <canvas id="screen" width="2000" height="1300" data-page-node-id="hFoOA99KnHNnXbfgJLLPQa"></canvas>
 </div>
 
 <!-- ─────────────── 屏幕快捷键 ───────────────
@@ -88,16 +88,16 @@
      ⚠️ 走的是**同一个** handleKey()（见 pvz.c 的注释），
         不是另写一套逻辑 —— 否则桌面按键与屏幕按钮的行为迟早会分叉。
      位置固定在左下角、避开安全区。 -->
-<nav id="keys" class="keys" hidden>
-  <button class="kb" data-key="32"  title="暂停 / 继续">⏸</button>
-  <button class="kb" data-key="87"  title="落雷（W）">⚡</button>
-  <button class="kb" data-key="77"  title="切换天气（M）">☁</button>
-  <button class="kb" data-key="69"  title="切换特效（E）">✨</button>
-  <button class="kb" data-key="70"  title="全屏（F）">⛶</button>
+<nav id="keys" class="keys" hidden data-page-node-id="0N2xxG5As1zG6LDYfqJrKA">
+  <button class="kb" data-key="32"  title="暂停 / 继续" data-page-node-id="2vH5sUokkNocgSxWjrDFsG">⏸</button>
+  <button class="kb" data-key="87"  title="落雷（W）" data-page-node-id="RGGjfSlYsavHsp8FV0Mhq9">⚡</button>
+  <button class="kb" data-key="77"  title="切换天气（M）" data-page-node-id="PFB7k5S380HyIP9uuRhxwi">☁</button>
+  <button class="kb" data-key="69"  title="切换特效（E）" data-page-node-id="u5sy066EnEQULFehiVBalR">✨</button>
+  <button class="kb" data-key="70"  title="全屏（F）" data-page-node-id="b1Mp2ZA1DB3jAZBC3dXVXf">⛶</button>
 </nav>
 
 <!-- ─────────────── 诊断条（仅 ?debug=1 时显示）─────────────── -->
-<div id="diag" class="diag" hidden></div>
+<div id="diag" class="diag" hidden data-page-node-id="YDZHlCMSW43PJKcByxzWcf"></div>
 
 <script src="shell.js"></script>
 </body>

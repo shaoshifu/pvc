@@ -16,6 +16,9 @@ CFLAGS="-O2 -Wall -Wextra"
 LIBS="-lgdi32 -luser32 -lmsimg32 -lwinmm -ld3d9 -lm"
 
 # 需要参数的测试：名字 → 运行参数
+# 资源核对脚本要用（本机是 C:/Python314，CI 上是 python3）
+PYTHON_BIN="${PYTHON:-C:/Python314/python.exe}"
+
 TESTS=(
   _test_cards50 _test_cards50_visual _test_primordial_buff _test_render_baseline
   _test_melee_only _test_relic_effect _test_relic_align _test_mech_fix
@@ -70,6 +73,16 @@ for t in "${TESTS[@]}"; do
 done
 
 rm -f _rb_chk.bin
+
+echo
+echo "=== ④ 资源核对 ==="
+if "$PYTHON_BIN" _verify_assets.py --quiet >/dev/null 2>&1; then
+    echo "  PASS"
+else
+    echo "  ★ FAIL（跑 python _verify_assets.py 看详情）"
+    fail=$((fail+1))
+fi
+
 echo
 echo "=== 汇总：通过 $pass / 失败 $fail / 编译问题 $cfail ==="
 echo "=== 真档核对 ==="

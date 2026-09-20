@@ -63,23 +63,16 @@ jobs:
         with:
           version: 3.1.61
 
-      - name: 核对资源（仓库里已是被裁剪过的）
+      - name: 核对资源
         run: |
-          set -e
-          # 仓库里的 assets/ 在 clone 后**就只是** PNG/JPG/sfx/bgm ——
-          # .gitignore 已排除 BMP 与 WAV 母版（约 334MB）。
-          # 所以这一步不需要"再裁一次"，只需要确认关键文件都在。
-          echo "资源总体积：$(du -sh assets | cut -f1)"
-          echo "PNG: $(ls assets/*.png 2>/dev/null | wc -l) 个"
-          echo "JPG: $(ls assets/*.jpg 2>/dev/null | wc -l) 个"
-          echo "音效: $(ls assets/sfx/*.wav 2>/dev/null | wc -l) 个"
-          echo "BGM: $(ls assets/bgm/*.mp3 2>/dev/null | wc -l) 个"
-          # 关键文件抽查：少一个都会让游戏静默缺素材
-          for f in assets/lawn.png assets/background.jpg assets/ui_menu_bg_v1.png \
-                   assets/rgplant_157.png assets/badge_primordial.png \
-                   assets/bgm_level1.mp3 assets/sfx/hit.wav; do
-            if [ -f "$f" ]; then echo "  ✓ $f"; else echo "  ✗ 缺失 $f"; exit 1; fi
-          done
+          # 用脚本核对，**不要**在 workflow 里硬编码文件名清单。
+          # 第一版在这里列了 7 个文件，其中两个后缀写错（lawn.png 实际是 lawn.jpg、
+          # ui_menu_bg_v1.png 实际是 .jpg）→ 这一步 exit 1、整个构建失败，
+          # 而报错看起来像"资源没打包进去"。
+          # 脚本的口径：总量阈值 + 少量逐一验证过的必需文件；
+          # 不做"引擎引用的每个名字都必须存在"（引擎有 50 个设计上就没美术的槽位，
+          # 那样判会报一堆误报，而会误报的检查最后一定会被人忽略）。
+          python3 _verify_assets.py
 
       - name: 编译 WASM
         run: |
