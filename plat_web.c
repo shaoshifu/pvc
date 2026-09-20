@@ -39,6 +39,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <time.h>   /* clock/CLOCKS_PER_SEC：GetTickCount 的非 wasm 实现要用 */
 
 /* ====================================================================== */
 /*  基础结构                                                              */
@@ -1356,8 +1357,54 @@ SHORT GetAsyncKeyState(int vk)
     return gKeys[vk];
 }
 
-DWORD GetTickCount(void) { return gTick; }
-void Sleep(DWORD ms) { (void)ms; }   /* 网页版由 rAF 驱动，不阻塞 */
+/* ---- 计时 ----
+   ★★ 必须返回**真实递增**的毫秒，不能只返回一个内部计数器。
+      第一版是 `return gTick;`，而 gTick 只在 platWebTickAdvance() 里增长 ——
+      网页外壳从来没调过它，于是 GetTickCount() **恒为 0**。
+
+      后果是静默且严重的（引擎里所有防抖逻辑都基于"now - last"）：
+        · sfxPlay:  `if ((DWORD)(now - lastHit) < 32) return;`
+          → now 与 lastHit 都是 0，(0-0)=0 < 32 **恒成立** →
+          **所有音效永远不播**（hit / hit_hard / zombie_die 直接 return）；
+        · toggleAllowed: 350ms 防抖 → 全屏切换只生效第一次，之后永远被拒；
+        · gDbgRenderMs 的耗时统计恒为 0，性能诊断也就失去意义。
+
+      本机验证（_web_main.c 只跑 60 帧、不看音频）**不会**暴露这个问题 ——
+      它属于"只有真正玩一遍才会发现"的类型。
+
+   ★ 第二个坑：**初值不能是 0**。
+      引擎的防抖写成 `if ((DWORD)(now - last) < 32) return;`，而 last 的初值是 0。
+      如果 now 也从 0 附近开始（wasm 的 performance.now 从页面加载算，
+      首次调用经常就返回 0.x → 截断成 0），那么 `0 - 0 = 0 < 32` 成立 →
+      **第一个音效被吞掉**；同理 toggleAllowed 的 350ms 防抖会让
+      **第一次全屏切换失效**。
+      Windows 上 GetTickCount() 是"系统启动以来的毫秒"，天然是几十万到上亿的大数，
+      所以这两个 bug **只在可移植侧出现** —— 桌面端从来没有过。
+      这里加一个 60 秒的基准偏移，模拟"进程已经跑了一会儿"，
+      与 Windows 的行为在"数值足够大"这点上保持一致。
+      （DWORD 减法天然处理回绕，这个偏移不影响 49.7 天回绕后的正确性。） */
+#define PLAT_TICK_BASE 60000u
+
+DWORD GetTickCount(void)
+{
+#ifdef __EMSCRIPTEN__
+    /* emscripten_get_now() 是单调递增的毫秒浮点（基于 performance.now），
+       正好符合 Windows GetTickCount 的语义（单调、不随系统时间调整而回退）。 */
+    return (DWORD)(emscripten_get_now() + (double)PLAT_TICK_BASE);
+#else
+    /* 本机验证：用标准库时钟提供同样的单调毫秒。
+       不用 time(NULL) —— 它的粒度是秒，做 32ms 级防抖完全不够。 */
+    static int     inited = 0;
+    static clock_t t0;
+    if (!inited) { t0 = clock(); inited = 1; }
+    return (DWORD)((double)(clock() - t0) * 1000.0 / (double)CLOCKS_PER_SEC)
+           + PLAT_TICK_BASE;
+#endif
+}
+
+/* 网页版由 requestAnimationFrame 驱动，主循环里不 Sleep ——
+   引擎的 Sleep 调用只是"限帧"，在网页版由浏览器接管。 */
+void Sleep(DWORD ms) { (void)ms; }
 
 /* ====================================================================== */
 /*  杂项                                                                  */

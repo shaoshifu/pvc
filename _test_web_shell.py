@@ -52,20 +52,44 @@ Module.HEAPU8 = new Uint8Array(Module.HEAPU32.buffer);
 window.__frameReady = false;
 window.__framePtr = 8;            // 4 字节对齐的偏移，避开 0（0 被外壳当作无帧）
 
+// 合成一帧"草坪色"的假数据，作为真帧文件不存在时的兜底。
+// 为什么要兜底：第一版**硬依赖** _frame_probe.raw，而那个文件是抓帧产物、
+// 会被 .gitignore 排除 —— 于是"提交一次、测试就从 35/35 掉到 29/35"。
+// 测试不该依赖仓库外的中间产物。现在：有真帧就用真帧（更可信），
+// 没有就用合成帧（自包含、可重复）。
+function synthFrame() {
+    const u32 = Module.HEAPU32;
+    const base = window.__framePtr >> 2;
+    for (let i = 0; i < FRAME_U32; i++) {
+        // 造一个可预测的图案：草坪绿 + 顶部天空蓝
+        const y = (i / FRAME_W) | 0;
+        const sky = y < 160;
+        const r = sky ? 120 : 84;
+        const g = sky ? 170 : 110;
+        const b = sky ? 210 : 41;
+        // BGRA 布局（与引擎的世界层一致）
+        u32[base + i] = ((255 << 24) | (r << 16) | (g << 8) | b) >>> 0;
+    }
+    window.__frameReady = true;
+    console.log('[mock] 已注入合成帧 ' + FRAME_W + 'x' + FRAME_H);
+}
+
 (function loadFrame() {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', '_frame_probe.raw', true);
     xhr.responseType = 'arraybuffer';
     xhr.onload = function () {
-        if (!xhr.response) return;
-        const buf = new Uint8Array(xhr.response);
-        // 文件头：GLB1 + w + h，之后是 BGRA 像素
-        const px = buf.subarray(12);
-        Module.HEAPU8.set(px, window.__framePtr);
-        window.__frameReady = true;
-        console.log('[mock] 真实帧已注入 ' + FRAME_W + 'x' + FRAME_H);
+        // 404 时也会走 onload，所以必须判 status 与长度
+        if (xhr.status === 200 && xhr.response && xhr.response.byteLength > 12) {
+            const buf = new Uint8Array(xhr.response);
+            Module.HEAPU8.set(buf.subarray(12, 12 + FRAME_U32 * 4), window.__framePtr);
+            window.__frameReady = true;
+            console.log('[mock] 真实帧已注入 ' + FRAME_W + 'x' + FRAME_H);
+        } else {
+            synthFrame();
+        }
     };
-    xhr.onerror = function () { console.log('[mock] 帧注入失败'); };
+    xhr.onerror = function () { synthFrame(); };
     xhr.send();
 })();
 
@@ -151,6 +175,25 @@ def main():
             # 拦截 pvz.js → 返回 mock
             page.route("**/pvz.js", lambda route: route.fulfill(
                 status=200, content_type="application/javascript", body=MOCK_JS))
+
+            # 拦截 _frame_probe.raw（真帧文件，抓帧产物、不入库）。
+            # 有就用真帧，没有就返回**空的 200** ——
+            # 不用 404：浏览器会为 404 打 console.error，
+            # 于是"页面加载无 JS 错误"这条断言会误报成 FAIL
+            # （实测过：33/35，失败的两条就是这个噪声）。
+            def frame_route(route):
+                fp = os.path.join(WEB, "_frame_probe.raw")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as fh:
+                        body = fh.read()
+                    route.fulfill(status=200,
+                                  content_type="application/octet-stream",
+                                  body=body)
+                else:
+                    route.fulfill(status=200,
+                                  content_type="application/octet-stream",
+                                  body=b"")     # JS 侧长度检查失败 → 走合成帧
+            page.route("**/_frame_probe.raw", frame_route)
 
             page.goto(base, wait_until="domcontentloaded")
             page.wait_for_timeout(400)
