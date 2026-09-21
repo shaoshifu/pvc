@@ -71,36 +71,35 @@ jobs:
           # ★ 这一步是 2026-09-21 emcc 构建失败后加的。
           #   那次失败的原因是两个 MSVCRT 专有函数（_wcsicmp / _wgetenv）没实现：
           #   本机 MinGW 会因为 kernel32/msvcrt 兜底而**看不出**缺口，
-          #   而 emcc 到 musl 上直接链接失败 —— 前面 6 步全过、到第 7 步才炸。
+          #   而 emcc 到 musl 上直接链接失败 —— 前面几步全过、到编译 WASM 才炸。
           #
-          # ⚠️ 两条刻意的设计：
-          #  ① **不阻塞构建**（exit 0）。它是我自己加的守卫，不该拦在真正的构建前面。
-          #     它在这个 CI 上曾误报过（本机通过、CI 失败），一阻塞就完全看不到
-          #     emcc 的真实结果 —— 那就本末倒置了。真正的权威是 emcc 自己。
-          #  ② **输出转成 annotation**（::error:: / ::warning::）。
-          #     因为 Actions 的原始日志要认证才能下载（匿名 GET 返回 403），
-          #     而**公开仓库的 annotation 无需登录即可读**。
-          #     之前试过贴 commit 评论，但那条路要么被 permissions 挡、
-          #     要么静默失效；annotation 是最可靠的一条。
+          # ⚠️ 三条刻意的设计，改动前先读：
+          #
+          #  ① **set +e，且不阻塞构建**。
+          #     GitHub Actions 的 bash 默认带 -e，任何非零返回都会让整步失败。
+          #     而这个检查是"守卫"，它自己曾在这个 CI 上误报过（本机通过、CI 失败）。
+          #     守卫一旦拦在真正的构建前面，就再也看不到 emcc 的真实结果 —— 本末倒置。
+          #     真正的权威是 emcc 自己。
+          #
+          #  ② **这个步骤里不能有任何可能非零退出的裸命令**。
+          #     真实踩过：一次 `str.replace(..., 1)` 的编辑打错位置，
+          #     把 emcc 步骤的注解代码插进了这一步，于是它会去 grep 一个
+          #     还不存在的 /tmp/emcc.log → grep 返回 1 → bash -e 让整步失败。
+          #     症状是"一个自称不阻塞的步骤把整个 CI 拦死了"，极难看出。
+          #
+          #  ③ 输出转 annotation：**公开仓库的 annotation 无需登录即可读**，
+          #     而 Actions 原始日志要认证才能下载（匿名 GET 返回 403）。
+          set +e
+
           python3 _check_web_symbols.py > /tmp/symcheck.log 2>&1
           RC=$?
           echo "==== 符号检查输出（退出码 $RC）===="
           cat /tmp/symcheck.log
-          if [ $RC -ne 0 ]; then
-            # 除了贴评论，也发 annotation（annotation 无需登录即可读，更可靠）
-            grep -E "error|Error|ERROR|undefined|failed|无法|找不到" /tmp/emcc.log \
-              | head -8 | while IFS= read -r line; do
-                esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')
-                echo "::error title=emcc 编译失败::${esc}"
-              done
-            LV="::warning"
-          else
-            LV="::notice"
-          fi
-          # 每行做成一条 annotation（workflow 命令要转义 % 和换行）
+
+          if [ "$RC" -ne 0 ]; then LV="::warning"; else LV="::notice"; fi
           head -14 /tmp/symcheck.log | while IFS= read -r line; do
             esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')
-            echo "${LV} title=符号检查（退出码 $RC）::${esc}"
+            echo "${LV} title=符号检查（退出码 ${RC}）::${esc}"
           done
           echo "（符号检查不阻塞构建；emcc 才是权威）"
           exit 0
@@ -213,14 +212,20 @@ jobs:
           ls -lh web/ || true
 
           if [ $RC -ne 0 ]; then
-            # ★★ 把失败日志贴到 commit 评论里 —— **这是刻意设计的**。
+            # ★★ 两条并行的公开通道，都是刻意设计的 ——
             #    Actions 的原始日志要认证才能下载（匿名访问返回 403），
-            #    而**公开仓库的 commit 评论是无需登录就能读的**。
-            #    于是"CI 失败 → 我看不到原因 → 只能猜"这个死循环被打破：
-            #    贴到评论里之后，我（以及任何协作者）都能直接读到 emcc 的报错。
-            #    只保留尾部 3500 字符：GitHub 单条评论上限 65536，
-            #    而 emcc 的错误通常在最后，头部全是无关的编译进度。
-            bash _ci_post_log.sh /tmp/emcc.log "emcc 编译 WASM 失败"
+            #    所以"CI 失败 → 我看不到原因 → 只能猜"这个死循环必须用别的路打破。
+            #
+            #    ① commit 评论：**公开仓库的评论无需登录即可读**。
+            #       只保留尾部 3500 字符（GitHub 单条评论上限 65536，
+            #       而 emcc 的报错通常在最后，头部全是无关进度）。
+            #    ② annotation：同样是公开可读，且不用处理评论的权限问题。
+            bash _ci_post_log.sh /tmp/emcc.log "emcc 编译 WASM 失败" || true
+            grep -E "error|Error|undefined reference|failed|无法|找不到" /tmp/emcc.log \
+              | head -8 | while IFS= read -r line; do
+                esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')
+                echo "::error title=emcc 编译失败::${esc}"
+              done
             exit 1
           fi
 
