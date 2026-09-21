@@ -275,11 +275,72 @@ HGDIOBJ SelectObject(HDC hdc, HGDIOBJ obj)
     return NULL;
 }
 
+/* ★★★ 区域（HRGN）的分配 —— 这里曾经有一个只在网页版暴露的严重 bug：
+   跑到约 30~60 帧后，菜单的按钮底板、图标、状态面板全部消失，只剩文字。
+   根因是"环形复用"的静态池：
+
+       static LONG rects[256][4];  static int n = 0;
+       if (n >= 256) n = 0;            ← 环绕后覆盖 rects[0]
+       return (HRGN)&rects[n++];       ← 返回的是**池内地址**
+
+   而引擎会把一个区域**长期持有**（pushRoundClip 的保存区）：
+       if (!gClipSav) gClipSav = CreateRectRgn(0,0,1,1);
+       gClipHad = (GetClipRgn(dc, gClipSav) == 1);
+       ... 绘制 ...
+       if (gClipHad) SelectClipRgn(dc, gClipSav);   ← 恢复剪切区
+
+   每帧会创建几十个区域（pushRoundClip 在循环里），累计到 256 就环绕一次，
+   而 gClipSav 恰好是 &rects[0] —— 于是"恢复"恢复成了**别人刚写进去的小矩形**，
+   剪切区被永久缩到一个小角，之后所有走 bltCore 的贴图（精灵、按钮、图标）
+   全被裁掉。而**文字是直接写 dc->bmp->bits 的、不检查剪切区**，
+   所以文字照常显示 —— 于是症状变成"只剩文字，UI 全没了"。
+
+   真 GDI 的句柄在存活期间绝不复用，所以**桌面版永远不会出现**这个问题，
+   只有我们的可移植后端会 —— 又一个"只在网页版暴露"的坑。
+
+   修法：给区域**正确的生命周期** —— 空闲槽分配 + DeleteObject 回收。
+   长期持有的句柄（gClipSav 从不解构）因此永不被复用。 */
+#define MAX_RGN 4096
+static LONG gRgns[MAX_RGN][4];
+static unsigned char gRgnLive[MAX_RGN];
+static int gRgnCursor = 0;
+
+HRGN CreateRectRgn(int l, int t, int r, int b)
+{
+    int i;
+    for (i = 0; i < MAX_RGN; i++) {
+        int k = (gRgnCursor + i) % MAX_RGN;
+        if (!gRgnLive[k]) {
+            gRgnLive[k] = 1;
+            gRgns[k][0] = l; gRgns[k][1] = t; gRgns[k][2] = r; gRgns[k][3] = b;
+            gRgnCursor = (k + 1) % MAX_RGN;
+            return (HRGN)&gRgns[k];
+        }
+    }
+    /* 池满：宁可返回 NULL（调用方会跳过裁剪），也**绝不能**覆盖仍然活着的句柄 ——
+       覆盖正是上面那个 bug 的根源。 */
+    return NULL;
+}
+
+/* 判断一个句柄是不是区域；是则返回槽位下标，否则 -1。DeleteObject 要用它回收。 */
+static int rgnIndexOf(HRGN rgn)
+{
+    int k;
+    if (!rgn) return -1;
+    for (k = 0; k < MAX_RGN; k++)
+        if ((HRGN)&gRgns[k] == rgn) return k;
+    return -1;
+}
+
 BOOL DeleteObject(HGDIOBJ obj)
 {
     struct PlatBitmap *b = (struct PlatBitmap *)obj;
     int k;
     if (!b) return TRUE;
+    /* ★ 区域必须在这里回收 —— 否则 CreateRectRgn 的池会被永久占用（见其上方注释：
+       不回收是"菜单 UI 跑到几十帧后消失"那个 bug 的成因之一）。 */
+    k = rgnIndexOf((HRGN)obj);
+    if (k >= 0) { gRgnLive[k] = 0; return TRUE; }
     /* 只回收位图；笔/刷是引擎侧的小对象，不在这里管 */
     for (k = 0; k < gBMN; k++) if (&gBMs[k] == b) {
         if (b->owns && b->bits) free(b->bits);
@@ -375,14 +436,7 @@ int SetBrushOrgEx(HDC hdc, int x, int y, POINT *old)
 /* 剪切区：引擎只用矩形区（CreateRectRgn / CreateRoundRectRgn + SelectClipRgn），
    且 pushRoundClip 用的是"圆角当作直角"的近似 —— 这里按矩形处理，
    与 GDI 对 Region 的实际裁剪结果在引擎的用法下一致。 */
-HRGN CreateRectRgn(int l, int t, int r, int b)
-{
-    static LONG rects[256][4];
-    static int n = 0;
-    if (n >= 256) n = 0;
-    rects[n][0] = l; rects[n][1] = t; rects[n][2] = r; rects[n][3] = b;
-    return (HRGN)&rects[n++];
-}
+
 
 HRGN CreateRoundRectRgn(int l, int t, int r, int b, int ew, int eh)
 {

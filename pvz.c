@@ -6570,9 +6570,13 @@ static void drawTerrainOverlay(HDC dc)
 
 }
 
+/* 诊断计数：本轮排查"菜单画面随时间变化"用，见 gameRenderCounters */
+static int gBgRuns = 0, gMenuBlockRuns = 0, gMenuTextRuns = 0, gMenuBgBlits = 0;
+
 static void drawBackground(HDC dc)
 {
     int r, c;
+    gBgRuns++;
     /* 场景背景：有资源就用整张后院背景图，否则退回程序化色块 */
     if (gSprBackground.ok) {
         spriteBlit(dc, &gSprBackground, VIEW_W * 0.5f, (float)VIEW_H, 1.0f, 1.0f, -1);
@@ -13235,10 +13239,12 @@ static void render(HDC out)
     /* 菜单的底色与植物图标画在世界层，与其余精灵共用 2x 坐标约定。 */
     if (gState == ST_MENU) {
         float by = 330.0f;
-        if (gSprMenuBg.ok)
+        gMenuBlockRuns++;
+        if (gSprMenuBg.ok) {
+            gMenuBgBlits++;
             spriteBlit(gWorldDC, &gSprMenuBg, VIEW_W * 0.5f, VIEW_H,
                        1.0f, 1.0f, -1);
-        else
+        } else
             fillRect(gWorldDC, 0, 0, VIEW_W, VIEW_H, RGB(20, 44, 26));
         fillRect(gWorldDC, 0, 0, VIEW_W, 5, RGB(150, 104, 62));
         for (i = 0; i < gLoadoutN; i++)
@@ -13281,6 +13287,7 @@ static void render(HDC out)
 
     /* ================= 文字层（2x，随最终输出保持清晰） ================= */
     if (gState == ST_MENU) {
+        gMenuTextRuns++;
         float cx = VIEW_W * 0.5f;
         putTextCS(gWorldDC, gF72, RGB(255, 236, 120), RGB(20, 40, 20), L"植物大战僵尸", cx, 200);
         putTextCS(gWorldDC, gF22, RGB(190, 235, 190), RGB(16, 34, 16), L"C 语言 · Win32 GDI 复刻版", cx, 268);
@@ -13679,6 +13686,29 @@ int gameArtCount(void) { return gArtLoaded; }
 /* 诊断：当前界面状态（比对两侧是否处在同一屏） */
 int gameStateId(void) { return (int)gState; }
 int gameMenuBgOk(void) { return gSprMenuBg.ok; }
+void gameRenderCounters(int *bg, int *blk, int *txt, int *blit)
+{
+    if (bg)   *bg   = gBgRuns;
+    if (blk)  *blk  = gMenuBlockRuns;
+    if (txt)  *txt  = gMenuTextRuns;
+    if (blit) *blit = gMenuBgBlits;
+}
+
+/* 诊断：直接暴露几个精灵的像素缓冲，用于判断"画面变了"是
+   精灵数据被改写，还是绘制路径出了问题。
+   which: 0=gSprMenuBg 1=gSprBackground 2=gSprButton[BTN_DARK][NORMAL]
+   返回 bits 指针；w/h 回填尺寸。 */
+const unsigned char *gameSpriteProbe(int which, int *w, int *h)
+{
+    const Sprite *s = NULL;
+    if (which == 0) s = &gSprMenuBg;
+    else if (which == 1) s = &gSprBackground;
+    else if (which == 2) s = &gSprButton[BTN_DARK][BTN_NORMAL];
+    if (!s) return NULL;
+    if (w) *w = s->w;
+    if (h) *h = s->h;
+    return (const unsigned char *)s->bits;
+}
 int gameLawnOk(void) { return gSprLawn.ok; }
 
 void gameSetDeterministic(unsigned seed)

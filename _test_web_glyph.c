@@ -210,6 +210,52 @@ int main(void)
         }
     }
 
+    /* ================= 区域池回归：UI 必须能顶住"跑很多帧"=================
+       ★★ 这是 2026-09-21 用户报"按钮都没了，就剩字"的根因，值得单独锁住。
+
+       症状：菜单只显示文字，按钮底板 / 图标 / 状态面板全部消失，
+             而且**跑得越久越明显**（我最初只抓早期帧，所以看着是好的）。
+       根因：plat_web.c 的 CreateRectRgn 用了"256 槽环形池"，
+             `if (n >= 256) n = 0;` 会**覆盖返回过的地址**。
+             而引擎会长期持有一个区域当"剪切区保存位"
+             （pushRoundClip: `gClipSav = CreateRectRgn(0,0,1,1)`），
+             它恰好是池里的 0 号槽 —— 环绕后内容被改写，
+             "恢复剪切区"就恢复成了别人刚写的小矩形，
+             剪切区被永久缩到一个小角 → 所有走 bltCore 的贴图全被裁掉。
+             而**文字是直接写 dc->bmp->bits 的、不看剪切区**，所以文字照常显示。
+             于是症状是"只剩文字"，极容易被误判成字体问题。
+
+       关键点：**这个 bug 要到第 30~60 帧之后才出现**。
+       所以断言必须"跑很多帧后再检查"，只测前几帧是抓不到的 ——
+       这也正是它一路躲过所有既有测试的原因。 */
+    {
+        extern int platWebFrameProbe(int *w, int *h, int *stride);
+        int i2;
+        unsigned k1 = 0, k900 = 0;
+
+        for (i2 = 0; i2 < 900; i2++) {
+            gameStep(1.0f / 60.0f, GetDC(NULL));
+            if (i2 == 0) {
+                const unsigned char *B2 = (const unsigned char *)gameWorldBits(&w, &h, &stride);
+                const unsigned char *p2 = B2 + ((size_t)60 * w + 200) * 4;
+                k1 = ((unsigned)p2[2] << 16) | ((unsigned)p2[1] << 8) | p2[0];
+            }
+        }
+        {
+            const unsigned char *B2 = (const unsigned char *)gameWorldBits(&w, &h, &stride);
+            const unsigned char *p2 = B2 + ((size_t)60 * w + 200) * 4;
+            k900 = ((unsigned)p2[2] << 16) | ((unsigned)p2[1] << 8) | p2[0];
+        }
+        printf("  菜单背景采样 world(200,60): 第1帧=0x%06X  第900帧=0x%06X\n", k1, k900);
+        CK(k1 == k900,
+           "跑到第 900 帧菜单背景仍然不变（变了 = 区域池环绕把剪切区顶坏了）");
+        /* 顺带确认那个点不是"白天草坪"的亮色（草坪是浅绿/蓝天，夜景是暗色）。
+           只做粗判：夜景的 RGB 各通道都不高。 */
+        CK(((k1 >> 16) & 255) + ((k1 >> 8) & 255) + (k1 & 255) < 260,
+           "菜单背景仍是夜景（亮度 %d < 260；若变成白天草坪会 >400）",
+           ((k1 >> 16) & 255) + ((k1 >> 8) & 255) + (k1 & 255));
+    }
+
     printf("\n=== 通过 %d / 失败 %d ===\n", nPass, nFail);
     if (nFail) {
         printf("文字链路在 C 侧就有问题 —— 不用再去浏览器里猜。\n");
