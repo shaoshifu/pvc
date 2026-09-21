@@ -74,6 +74,21 @@ function log(msg) {
     }
 }
 
+/* ★ 错误一律打出去，**不受 DEBUG 开关控制**。
+   教训（2026-09-15）：字形注入里 catch 到异常后调的是 log()，
+   而 log() 只在 ?debug=1 时才 console.log —— 于是异常被完全吞掉，
+   表现成"字形只灌进去一部分、画面上是一排占位方块"，
+   而我在这边看控制台是干净的、以为没有报错。
+   一个只在调试模式下才说话的报错，等于没有报错。 */
+function logErr(msg) {
+    try { console.error('[pvz][ERR]', msg); } catch (_) {}
+    if (diagEl) {
+        diagEl.hidden = false;
+        diagEl.textContent = (diagEl.textContent + '\n[ERR] ' + String(msg))
+            .split('\n').slice(-12).join('\n');
+    }
+}
+
 /* ═════════════════════════ ① 布局与坐标映射 ═════════════════════════
    游戏是 1000×650（≈3:2），iPad 有 4:3 / 1.43，比例都对不上。
    策略：**等比铺满、居中留边**（contain，不是 cover）。
@@ -255,6 +270,145 @@ function bindPointer() {
      canvas 的 putImageData 则**必须**有 alpha，否则整幅画面全透明。
      所以这个转换放在外壳做，不放在光栅后端做。
    ─────────────────────────────────────────────────────────── */
+/* ═════════════════════════ 字形光栅化（文字） ═════════════════════════
+   为什么需要它：引擎的软件光栅没有字体引擎，文字必须由 JS 用 Canvas2D
+   光栅化成位图、灌回 wasm 的字形表。没有这一步的后果是**整屏一个字的都没有** ——
+   阳光数、卡价、波次、悬停提示、菜单全部消失，而画面其余部分完全正常，
+   看起来像"UI 没做"，其实是"字没送进去"。
+
+   契约（与 plat_web.c 严格对齐，改一边必须改另一边）：
+     · px 是**设备**像素（= 逻辑字号 × 世界层缩放）。世界层是 2x，
+       所以逻辑 15px 的字要按 30px 光栅化；按 15px 做会被放大成糊的。
+     · 位图的**基线在第 px 行**（从顶往下数）。引擎侧 curY 就是基线，
+       贴图起点 = curY - px。
+     · 位图只存**覆盖率**（白色 + alpha）。颜色由引擎的 SetTextColor 现算，
+       所以这里**绝不能**染成别的颜色，否则所有文字都会是同一个色。
+     · 光栅化时若某字的实际 ascent 超过 px，宁可略微缩小字号，
+       也不能切顶 —— 切顶的字比小字难看得多。
+
+   为什么用「引擎来取」而不是「外壳预先铺一遍字符表」：
+     引擎的文案大量是运行时拼的（阳光 123、第 4/10 波、植物名…），
+     外壳硬编码必然漏字。所以由引擎在查不到字形时登记请求，外壳来取。
+   ─────────────────────────────────────────────────────────────────── */
+const GLYPH_FONT = '"Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Heiti SC", "WenQuanYi Micro Hei", sans-serif';
+let glyphCount = 0;
+let glyphFails = 0;             /* 注入被拒/参数非法 的次数，供自检用 */
+
+/* 每次 pump 之后调用：若"有请求待处理、但一个都没灌进去"连续多帧，
+   就吼一声。2026-09-15 那个 const 遮蔽 bug 就是靠这个才能被立刻发现 ——
+   它不会报错，只会让字形表永远填不满、画面上大半是占位色块。 */
+let glyphStall = 0;
+function glyphWatchdog(made, pending) {
+    if (pending && made === 0) {
+        if (++glyphStall === 12) {
+            logErr('字形注入连续 12 帧零进展（待处理请求仍在）—— 字形管线卡住了');
+        }
+    } else {
+        glyphStall = 0;
+    }
+}
+
+/* 单个字形的离屏画布复用（每次 new 一个 canvas 太慢，2000 个字会明显卡） */
+const glyphCv = document.createElement('canvas');
+const glyphCtx = glyphCv.getContext('2d', { willReadFrequently: true });
+
+/* 返回 { w, h, adv, cov } —— cov 是覆盖率数组（每像素 1 字节） */
+function rasterGlyph(cp, px, bold) {
+    const ch = String.fromCodePoint(cp);
+    const base = (bold ? 'bold ' : '') + px + 'px ' + GLYPH_FONT;
+
+    /* ① 先量 ascent，必要时缩字号，避免切顶 */
+    glyphCtx.font = base;
+    let m = glyphCtx.measureText(ch);
+    let asc = Math.ceil(m.actualBoundingBoxAscent || px * 0.9);
+    let size = px;
+    if (asc > px - 1 && asc > 0) {
+        size = Math.max(1, Math.floor(px * (px - 1) / asc));
+        glyphCtx.font = (bold ? 'bold ' : '') + size + 'px ' + GLYPH_FONT;
+        m = glyphCtx.measureText(ch);
+        asc = Math.ceil(m.actualBoundingBoxAscent || size * 0.9);
+    }
+
+    const adv  = Math.max(1, Math.round(m.width));
+    const desc = Math.max(2, Math.ceil((m.actualBoundingBoxDescent || size * 0.25)));
+    const w = Math.max(1, Math.ceil(m.width) + 2);
+    const h = Math.min(px + desc + 2, Math.max(asc + 2, px + 2));
+
+    glyphCv.width = w;
+    glyphCv.height = h;
+    /* 改尺寸会重置上下文状态，所以要重新设 font */
+    glyphCtx.font = (bold ? 'bold ' : '') + size + 'px ' + GLYPH_FONT;
+    glyphCtx.textBaseline = 'alphabetic';
+    glyphCtx.textAlign = 'left';
+    glyphCtx.clearRect(0, 0, w, h);
+    glyphCtx.fillStyle = '#fff';              /* 只画覆盖率，颜色交给引擎 */
+    glyphCtx.fillText(ch, 1, px);             /* ★ 基线落在第 px 行 */
+
+    const d = glyphCtx.getImageData(0, 0, w, h).data;
+    const cov = new Uint8Array(w * h);
+    for (let i = 0, j = 3; i < cov.length; i++, j += 4) cov[i] = d[j];
+    return { w, h, adv, cov };
+}
+
+/* 从引擎取请求 → 光栅化 → 回灌。limit 控制单帧最多做几个（别让首帧卡住）。
+   返回本帧实际注入的字形数。 */
+function pumpGlyphs(limit) {
+    if (!Module || !Module.ccall) return 0;
+    /* ⚠️ 变量命名：这个函数里**绝不能**再出现单个字母 n。
+       2026-09-15 这里写成 `let n = 0` 当计数器、循环体里又写了
+       `const n = g.cov.length`，于是 `n++` 变成"给 const 赋值" →
+       TypeError → 被下面的 catch 吞掉 → **每帧只注入 1 个字形**。
+       症状：字形表永远填不满（只进去一小部分），画面上大部分文字是
+       C 侧的占位色块，看起来像"字体没接上"。所以这里用 done / total 这类
+       不会撞车的名字。 */
+    let done = 0;
+    const p = Module._malloc(12);            /* 3 个 int32 */
+    try {
+        while (done < limit) {
+            const ok = Module.ccall('platWebGlyphReq', 'number',
+                                    ['number', 'number', 'number'], [p, p + 4, p + 8]);
+            if (!ok) break;
+            const cp   = Module.HEAP32[p >> 2];
+            const px   = Module.HEAP32[(p >> 2) + 1];
+            const bold = Module.HEAP32[(p >> 2) + 2];
+            if (px <= 0 || px > 512) { glyphFails++; continue; }   /* 异常字号：丢弃并记一笔 */
+
+            const g = rasterGlyph(cp, px, bold);
+
+            /* ★★ 必须给满 w*h*4 字节（预乘 BGRA），不能只给 w*h 的覆盖率。
+               platWebGlyph 内部是 `memcpy(dst, src, gw*gh*4)` —— 只传 w*h
+               就是**越界读**：它会去啃堆里紧邻的别人的数据。
+               症状非常误导：字形确实"注入成功"、计数也对、画面上也真的有字，
+               但字是**颗粒状噪声/条纹**（读到了垃圾），不报任何错。
+               本机测试用的是手工构造的 4 通道 buffer，所以本机过、线上坏 ——
+               又是"两边不一致"这一类。引擎只读 alpha（覆盖率），字节数必须给足。 */
+            const bytes = g.w * g.h * 4;
+            const tmp = new Uint32Array(g.w * g.h);
+            for (let i = 0; i < tmp.length; i++) {
+                const c = g.cov[i];
+                tmp[i] = (c << 24) | (c << 16) | (c << 8) | c;   /* 四通道同值（预乘白） */
+            }
+            const buf = Module._malloc(bytes);
+            Module.HEAPU8.set(new Uint8Array(tmp.buffer), buf);
+            /* platWebGlyph 内部会 memcpy，所以这里用完即可释放 */
+            const rc = Module.ccall('platWebGlyph', 'number',
+                         ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                         [cp, px, bold, buf, g.w, g.h, g.adv]);
+            Module._free(buf);
+            if (!rc) { glyphFails++; continue; }   /* 表满：记一笔，别静默 */
+            glyphCount++;
+            done++;
+        }
+    } catch (e) {
+        /* 用 logErr 而不是 log：log 只在 ?debug=1 时才输出，
+           而这个异常一旦发生，"字形只灌进去一部分"会被彻底静默掉。 */
+        logErr('字形注入异常: ' + (e && e.message ? e.message : e));
+    } finally {
+        Module._free(p);
+    }
+    return done;
+}
+
 function frame(now) {
     if (!running) return;
     requestAnimationFrame(frame);
@@ -268,6 +422,22 @@ function frame(now) {
     if (dt < 0.0005) dt = 0.0005;
 
     const t0 = performance.now();
+
+    /* ★ 每帧先补字形，再渲染 —— 顺序不能反。
+       引擎在排版阶段（GetTextExtentPoint32W）就会登记"缺哪些字"，
+       所以先 pump 的话，本帧画的文字就已经有真实字形了。
+       早期限流 24 个/帧：首次进入需要约 2000 个字形，
+       全部塞进一帧会明显卡一下；分摊到 ~80 帧（1.3 秒）里几乎无感。 */
+    {
+        const made = pumpGlyphs(glyphCount < 4000 ? 48 : 4);
+        /* 还有没有待处理的请求？用来判断"是惰性补字"还是"卡住了" */
+        /* ⚠️ 不能用 platWebGlyphReq 探还有没有请求 —— 它是**出队**语义，
+           探一次就把那条请求吞掉，那个字永远拿不到字形。
+           用不消费的 platWebGlyphReqCount。 */
+        let pending = 0;
+        try { pending = Module.ccall('platWebGlyphReqCount', 'number', []); } catch (_) {}
+        glyphWatchdog(made, pending > 0);
+    }
 
     /* 渲染：out 传一块"假的"屏幕 DC。网页版不读它，
        只靠 platWebFrame() 拿世界层（2x，画质来源）。
@@ -437,7 +607,14 @@ window.PVZ = {
     bgmPlaying: function (path) {
         if (!audio.bgmEl || (path && audio.bgmPath !== path)) return 0;
         return (!audio.bgmEl.paused && !audio.bgmEl.ended) ? 1 : 0;
-    }
+    },
+
+    /* 字形自检：已注入的字形数。0 = 没有任何文字会被画出来。
+       暴露出来是为了让端到端测试能**断言**这件事 ——
+       "整屏无文字"不会抛异常、不会请求失败，只能靠这个数字发现。 */
+    glyphCount: function () { return glyphCount; },
+    glyphFails: function () { return glyphFails; },
+    pumpGlyphs: pumpGlyphs
 };
 
 /* ═════════════════════════ ⑤ 存档持久化 ═════════════════════════
@@ -615,6 +792,12 @@ function startGame() {
 
     const n = Module.ccall('gameArtCount', 'number', []);
     log('素材载入 ' + n + ' 张');
+
+    /* 立刻预热一批字形：引擎在开局排版时就把"缺哪些字"登记好了，
+       这里先灌一批，避免开头零点几秒里文字是空框。
+       剩下的由 frame() 每帧续补（见那里的说明）。 */
+    pumpGlyphs(240);
+    log('字形预热 ' + glyphCount + ' 个');
 
     /* 必须再同步一次存档：
        createLayers/gameBoot 里会读存档，而我们把文件写进 MEMFS 的时机

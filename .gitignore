@@ -139,3 +139,17 @@ preview*.png
 _*.png
 _*.tsv
 _*.raw
+
+# ---- 诊断/验证的输出图与原始 dump：一次性的，不入库 ----
+# 这一轮（2026-09-15 修"整屏无文字"）产出的一批：
+#   _live_world.raw / _glyph_test.raw  世界层原始 dump（每个 10MB）
+#   *.jpg / *.png                       截图与放大图
+# 它们都能由脚本重新生成（_dump_live_world.py / _test_web_glyph.c），
+# 而且单个 10MB × 好几个，进仓库会白白把体积顶上去。
+_glyph_test.raw
+_glyph_test.png
+_web_out.raw
+_live_world.raw
+_ingame.raw
+_*.jpg
+_*.png

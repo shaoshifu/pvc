@@ -84,6 +84,36 @@ int main(int argc, char **argv)
     printf("  世界层：%dx%d，行距 %d，指针 %s\n", w, h, stride, bits ? "非空" : "**空**");
     if (!bits) return 1;
 
+    /* ★ 字形请求通道自检。
+       本机没有 JS，所以文字**画不出来**（走"色块占位"分支）——
+       这是预期行为。但"引擎到底有没有向外壳索要字形"是可以在本地验证的：
+       如果这个数字是 0，说明排版阶段根本没走 GetTextExtentPoint32W/DrawTextW，
+       那么线上也就不会有任何文字 —— 而且不会报错。
+       所以这里把它显式打出来，并抽查几个字符，确认字符集合理。 */
+    {
+        extern int platWebGlyphReq(int *cp, int *px, int *bold);
+        int cp, px, bold, nreq = 0, shown = 0, i;
+        int sizes[8]; int szN = 0;
+        while (platWebGlyphReq(&cp, &px, &bold)) {
+            nreq++;
+            for (i = 0; i < szN; i++) if (sizes[i] == px) break;
+            if (i == szN && szN < 8) sizes[szN++] = px;
+            if (shown < 12) {
+                printf("     待光栅化: U+%04X  %dpx%s\n", cp, px, bold ? " bold" : "");
+                shown++;
+            }
+        }
+        printf("  字形请求 %d 个", nreq);
+        if (szN) {
+            printf("（字号: ");
+            for (i = 0; i < szN; i++) printf("%s%d", i ? ", " : "", sizes[i]);
+            printf(" 设备像素）");
+        }
+        printf("\n");
+        if (nreq == 0)
+            printf("  ★ 没有任何字形请求 —— 线上会**整屏无文字**，且不报错\n");
+    }
+
     if (!writeRaw(outpath, bits, w, h, stride)) {
         fprintf(stderr, "写 %s 失败\n", outpath);
         return 1;

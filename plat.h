@@ -494,9 +494,24 @@ BOOL     AdjustWindowRectEx(RECT *rc, DWORD style, BOOL menu, DWORD exStyle);
 
 /* 网页后端额外暴露给外壳的入口（Windows 侧不需要，故声明在可移植分支内） */
 int  platWebInit(int w, int h, const char *title);
-/* 由 JS 侧注入字形位图：见 plat_web.c 的说明（文字用 Canvas2D 光栅一次后缓存） */
+/* 由 JS 侧注入字形位图：见 plat_web.c 的说明（文字用 Canvas2D 光栅一次后缓存）
+   ★ 位图契约：**基线在第 px 行**（从位图顶往下数），px 是**设备**像素尺寸
+     （= 逻辑字号 × 世界变换缩放）。引擎侧 curY 就是基线，贴图起点 = curY - px。 */
 int  platWebGlyph(int cp, int px, int bold, const unsigned char *bgra,
                   int gw, int gh, int adv);
+/* ★ 引擎 → 外壳的**反向**通道：取一条"待光栅化"的字符请求。
+   引擎查不到字形时会登记，外壳来取并光栅化后回灌 platWebGlyph。
+   为什么是拉不是推：引擎不知道哪些字符会被画出来（文案大量是运行时拼的），
+   硬编码字符表必然会漏字。返回 0 = 暂时没有了。 */
+int  platWebGlyphReq(int *cp, int *px, int *bold);
+/* 已注入的字形数量（外壳可用于显示加载进度 / 自检） */
+int  platWebGlyphCount(void);
+/* 待光栅化队列长度，**不消费**（用 platWebGlyphReq 去探会把请求吞掉）。 */
+int  platWebGlyphReqCount(void);
+/* 诊断：实际命中字形并贴图的次数 / 落空次数。
+   hit 恒为 0 → C 侧的查找或贴图坏了；hit 正常但画面无字 → JS 侧覆盖数据或位置。 */
+int  platWebGlyphHit(void);
+int  platWebGlyphMiss(void);
 /* 把一帧的指针事件交给游戏：type 0=move 1=down 2=up 3=right-up */
 void platWebPointer(int type, float x, float y);
 void platWebKey(int vk, int down);

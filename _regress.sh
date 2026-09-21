@@ -110,6 +110,34 @@ if [ -f $WP_EXE ]; then
 fi
 
 echo
+echo "=== ④b 文字（字形注入）端到端测试 ==="
+# 判定的核心是"文字到底有没有被画到画面上"。
+# 2026-09-15 线上出现"素材 853 张全载入、0 个 JS 异常，但**整屏一个字的都没有**"：
+# putText() 用 DrawTextW(dc, s, **-1**, ...) 表示"按 NUL 结尾"（Win32 约定），
+# 而 drawTextCore 把 n 当计数用 → `0 < -1` 恒假 → 循环体一次都不执行。
+# 症状极具迷惑性：引擎照常登记字形请求（GetTextExtentPoint32W 收到的是真实长度），
+# 于是"请求有、命中 0、落空 0"，看着像外壳没接上，实际是那一行把循环跳过了。
+# 这个测试用"实心假字形 + 全图纯色块统计"把结论钉死，不用去浏览器里猜。
+GW_EXE=_test_web_glyph.exe
+GW_OUT=$(gcc -DPLAT_PORTABLE -O2 -Wall -Wextra -I. -o $GW_EXE \
+         _test_web_glyph.c plat_web.c pvz.c -lm $WP_EXTRA 2>&1)
+if [ -n "$GW_OUT" ]; then
+    echo "  ★ 编译告警/错误："
+    echo "$GW_OUT" | head -8
+    cfail=$((cfail+1))
+    rm -f $GW_EXE
+fi
+if [ -f $GW_EXE ]; then
+    if ./$GW_EXE >/dev/null 2>&1; then
+        echo "  PASS"
+        pass=$((pass+1))
+    else
+        echo "  ★ FAIL（跑 ./$GW_EXE 看是哪条断言）"
+        fail=$((fail+1))
+    fi
+fi
+
+echo
 echo "=== ⑤ 可移植侧符号检查 ==="
 if "$PYTHON_BIN" _check_web_symbols.py --quiet >/dev/null 2>&1; then
     echo "  PASS"

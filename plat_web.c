@@ -935,13 +935,67 @@ BOOL GradientFill(HDC hdc, TRIVERTEX *vt, unsigned long nv,
 /* 字形表：JS 侧用 Canvas2D 光栅一次、把 alpha 转成预乘 BGRA 后注入。
    本地测试没有 JS → 退化成"实心方块 + 字宽估计"，只用于确认版式，
    像素比对时会**单独排除文字层**（见 WEB_PORT.md 的验证方案）。 */
-#define MAX_GLYPH 8192
+
+/* ★★ 字形尺寸必须按**设备**像素光栅化，不能按逻辑像素。
+   理由：引擎在逻辑坐标系（1000×650）里排版，而真正的位图是世界层（2000×1300）。
+   `CreateFontW(-15)` 得到的 fontPx=15 是**逻辑**高度；如果照 15px 光栅化字形，
+   再被世界变换放大 2 倍贴上去，字会糊成一片。
+   所以查找/请求字形时都用 devPx = fontPx × 变换缩放（见 dcDeviceScale）。
+
+   ★★ 位图契约：**基线在第 devPx 行**（从位图顶往下数）。
+   引擎侧 curY 是**基线**（= rc.top + fontPx，见 DrawTextW），
+   所以贴图起点 = curY - devPx。JS 侧用 textBaseline='alphabetic' 在 y=devPx
+   处 fillText 即可满足；若某个字的实际 ascent 超过 devPx，JS 会略微缩小字号，
+   宁可小一点也不能切顶（切顶的字比小字更难看）。
+
+   容量：实测引擎共用到 1328 个不同字符 × 6 个字号组合 ≈ 7968，
+   留一倍余量。超了只是不再收新字形（老字形仍可用），不会崩。 */
+#define MAX_GLYPH 12288
 typedef struct {
     int cp, px, bold, w, h, adv;
     unsigned char *bgra;
 } Glyph;
 static Glyph gGlyphs[MAX_GLYPH];
 static int gGlyphN = 0;
+
+/* 待光栅化请求队列（引擎 → 外壳的"反向"通道）。
+   为什么是**拉**而不是推：引擎根本不知道有哪些字符会被画出来
+   （大量文案是运行时拼的：阳光数、卡价、波次、悬停提示、肉鸽三选一…）。
+   与其在外壳里硬编码一份字符表（漏一个字就少一个字），
+   不如让引擎在"查不到字形"时登记一条请求，外壳来取。
+   好处：① 只光栅化真正用到的；② 新加文案不必同步改外壳。 */
+typedef struct { int cp, px, bold; } GlyphReq;
+static GlyphReq gGlyphReq[MAX_GLYPH];
+static int gGlyphReqN = 0;
+
+/* 登记一条请求。已在队列里的不重复登记 —— 否则在字形注入之前
+   每一帧都会把同一批字再登记一遍，队列瞬间被重复项撑满。 */
+static void glyphRequest(int cp, int px, int bold)
+{
+    int i;
+    if (gGlyphReqN >= MAX_GLYPH) return;
+    for (i = 0; i < gGlyphReqN; i++)
+        if (gGlyphReq[i].cp == cp && gGlyphReq[i].px == px && gGlyphReq[i].bold == bold)
+            return;
+    gGlyphReq[gGlyphReqN].cp = cp;
+    gGlyphReq[gGlyphReqN].px = px;
+    gGlyphReq[gGlyphReqN].bold = bold;
+    gGlyphReqN++;
+}
+
+/* 外壳取一条待光栅化的请求。返回 0 = 暂时没有了（不消费）。
+   取出即出队（用"读游标 + 压缩"的方式，队列很小，无需环形缓冲）。 */
+int platWebGlyphReq(int *cp, int *px, int *bold)
+{
+    if (gGlyphReqN <= 0) return 0;
+    if (cp)   *cp   = gGlyphReq[0].cp;
+    if (px)   *px   = gGlyphReq[0].px;
+    if (bold) *bold = gGlyphReq[0].bold;
+    gGlyphReqN--;
+    if (gGlyphReqN > 0)
+        memmove(&gGlyphReq[0], &gGlyphReq[1], (size_t)gGlyphReqN * sizeof(GlyphReq));
+    return 1;
+}
 
 int platWebGlyph(int cp, int px, int bold, const unsigned char *bgra,
                  int gw, int gh, int adv)
@@ -959,6 +1013,42 @@ int platWebGlyph(int cp, int px, int bold, const unsigned char *bgra,
     }
     gGlyphN++;
     return 1;
+}
+
+/* 已注入的字形数（诊断用：外壳可显示进来看进度） */
+int platWebGlyphCount(void) { return gGlyphN; }
+
+/* 待光栅化队列的长度，**不消费**。
+   为什么必须单独有它：platWebGlyphReq 是出队语义，拿它去探一下
+   会把那条请求吞掉，于是那个字永远拿不到字形 —— 一个自检动作反而制造 bug。
+   看门狗（判断是惰性补字、还是管线卡住）必须用这个。 */
+int platWebGlyphReqCount(void) { return gGlyphReqN; }
+
+/* 诊断计数：实际命中字形并贴图 / 落空。
+   这两个数字能一眼分开两类故障 ——
+     hit 一直是 0 → 查找或贴图有问题（C 侧）
+     hit 涨但画面没字 → 光栅化产出空覆盖、或位置算错（JS 侧 / 变换）
+   没有它就只能靠"看截图猜"，而这类故障恰恰**不报错**。 */
+static int gGlyphHit = 0, gGlyphMiss = 0;
+int platWebGlyphHit(void)  { return gGlyphHit; }
+int platWebGlyphMiss(void) { return gGlyphMiss; }
+
+/* ★ 比 hit 更关键的一个数字：**实际写进位图的像素数**。
+   hit 只表示"字查到了、进入了贴图分支"，而贴图里的越界判断可能把它整块丢掉 ——
+   那种情况下 hit 在涨、画面却一个字也没有，看 hit 会以为一切正常。
+   所以判定"文字到底有没有落到画面上"，必须看这个。 */
+static long gGlyphPix = 0;
+int  platWebGlyphPixels(void) { return (int)gGlyphPix; }
+
+/* 最后一次贴图的矩形（设备坐标），用于定位"字被画到哪去了"。
+   位置类故障（基线语义反了、变换缩放漏了）没有它就只能靠猜。 */
+static int gGlyphRectX = -1, gGlyphRectY = -1, gGlyphRectW = 0, gGlyphRectH = 0;
+void platWebGlyphLastRect(int *x, int *y, int *w, int *h)
+{
+    if (x) *x = gGlyphRectX;
+    if (y) *y = gGlyphRectY;
+    if (w) *w = gGlyphRectW;
+    if (h) *h = gGlyphRectH;
 }
 
 static Glyph *glyphFind(int cp, int px, int bold)
@@ -1003,72 +1093,150 @@ int SetBkMode(HDC hdc, int mode)
     return old;
 }
 
-/* 把一段宽字符串按字形表画到 dc。返回累计推进宽度（逻辑像素）。
-   引擎只用 (x, y) 作为文字**基线**位置（putTextS 的锚点语义）。 */
+/* 当前 DC 的世界变换在 x 方向的缩放倍数。
+   字形是**位图**资源，必须按设备尺寸光栅化（见 MAX_GLYPH 上方的说明）。
+   兼容模式（GM_COMPATIBLE）下变换不生效，取 1。 */
+static float dcDeviceScale(const struct PlatDC *dc)
+{
+    float s;
+    if (!dc) return 1.0f;
+    if (dc->gmode == 1) return 1.0f;
+    s = dc->xf.eM11;
+    if (s < 0) s = -s;
+    if (s < 0.01f) s = 1.0f;          /* 防御：未设变换或退化的矩阵 */
+    return s;
+}
+
+/* 把一段宽字符串按字形表画到 dc。
+   dc->curX / dc->curY 是**设备**坐标，且 curY 是**基线**（与 MoveToEx 一致）。
+   返回累计推进宽度，单位是**逻辑**像素（引擎用它排版）。 */
 static int drawTextCore(struct PlatDC *dc, const wchar_t *s, int n)
 {
     int i, pen = 0;
+    float sc;
+    int devPx;
     if (!dc || !s) return 0;
+
+    /* ★★ n < 0 表示"按 NUL 结尾"，**不是**"0 个字符"。
+       这是 Win32 的约定（-1 是最常见的传法），而引擎就是这么调的：
+           putText(): DrawTextW(dc, s, -1, &rc, ...)          ← pvz.c:394
+       第一版把 n 直接当计数用（`for (i = 0; i < n; ...)`），于是 `0 < -1`
+       恒为假 —— **循环体一次都不执行**，整屏文字全部画不出来。
+       症状极具迷惑性：没有异常、没有告警，
+       而 GetTextExtentPoint32W 收到的是真实长度（wcslen），照常登记字形请求，
+       于是"字形请求有、字形命中 0、落空 0" —— 看着像外壳没接上，
+       实际是这一行把循环直接跳过了。
+       本地无 JS 时表现为"没有色块占位"，线上表现为"一个字都没有"。 */
+    if (n < 0) n = (int)wcslen(s);
+
+    sc = dcDeviceScale(dc);
+    devPx = (int)((float)dc->fontPx * sc + 0.5f);
+    if (devPx < 1) devPx = 1;
+
     for (i = 0; i < n && s[i]; i++) {
         int cp = (int)(unsigned short)s[i];
-        int px = dc->fontPx, adv;
-        Glyph *g = glyphFind(cp, px, dc->fontBold);
+        int adv;
+        Glyph *g = glyphFind(cp, devPx, dc->fontBold);
         if (g) {
+            /* 契约：位图基线在第 devPx 行 → 位图顶点 = 基线 - devPx */
+            int bx = dc->curX + pen;
+            int by = dc->curY - devPx;
             int x, y;
+            /* ★ 字形位图只存**覆盖率**（JS 侧一律光栅化成白色），
+               颜色由引擎的 textCol 现算 —— 否则所有文字都会是白的，
+               而引擎到处都是彩色文字（白色正文、红色"买不起"、模式色、
+               深色描边阴影 putTextS 的 sh 参数…）。 */
+            const unsigned char cBv = cB(dc->textCol);
+            const unsigned char cGv = cG(dc->textCol);
+            const unsigned char cRv = cR(dc->textCol);
             for (y = 0; y < g->h; y++)
                 for (x = 0; x < g->w; x++) {
                     const unsigned char *sp = g->bgra + ((size_t)y * g->w + x) * 4;
-                    int tx = (int)(dc->curX + pen + x);
-                    int ty = (int)(dc->curY + y);
-                    if (sp[3] == 0) continue;
-                    if ((unsigned)tx < (unsigned)dc->bmp->w &&
-                        (unsigned)ty < (unsigned)dc->bmp->h)
-                        blendOver(dc->bmp->bits + ((size_t)ty * dc->bmp->w + tx) * 4,
-                                  sp, sp[3]);
+                    unsigned cov = sp[3];
+                    int tx = bx + x;
+                    int ty = by + y;
+                    unsigned char src[4];
+                    if (!cov) continue;
+                    if ((unsigned)tx >= (unsigned)dc->bmp->w ||
+                        (unsigned)ty >= (unsigned)dc->bmp->h) continue;
+                    src[0] = (unsigned char)((unsigned)cBv * cov / 255u);
+                    src[1] = (unsigned char)((unsigned)cGv * cov / 255u);
+                    src[2] = (unsigned char)((unsigned)cRv * cov / 255u);
+                    src[3] = (unsigned char)cov;
+                    blendOver(dc->bmp->bits + ((size_t)ty * dc->bmp->w + tx) * 4,
+                              src, (int)cov);
+                    gGlyphPix++;
                 }
+            gGlyphRectX = bx; gGlyphRectY = by; gGlyphRectW = g->w; gGlyphRectH = g->h;
             adv = g->adv ? g->adv : g->w;
+            gGlyphHit++;
         } else {
-            /* 无字形：画一个与字号等高的色块占位，宽度按"全角/半角"估。
-               这只在本地无 JS 测试时出现，用于验证版式不被破坏。 */
+            /* 没有字形：登记请求（外壳会来取，光栅化后注入），
+               同时画一个与字号等高的色块占位。
+               本机没有 JS → 永远走这条分支，所以本地导出的世界层里
+               **文字是空框**，这是预期行为（见 WEB_PORT.md §2.3）。 */
             int full = (cp > 0x2E80);
-            adv = full ? px : (px / 2);
-            {
-                int x, y;
-                for (y = -px + 2; y <= 0; y++)
-                    for (x = 0; x < adv - 1; x++)
-                        putOpaque(dc->bmp, dc->curX + pen + x, dc->curY + y,
-                                  dc->textCol);
-            }
+            int x, y;
+            adv = full ? devPx : (devPx / 2);
+            glyphRequest(cp, devPx, dc->fontBold);
+            gGlyphMiss++;
+            for (y = -devPx + 2; y <= 0; y++)
+                for (x = 0; x < adv - 1; x++)
+                    putOpaque(dc->bmp, dc->curX + pen + x, dc->curY + y, dc->textCol);
         }
-        pen += adv;
+        pen += adv;                    /* 设备像素推进 */
     }
-    return pen;
+    /* 换算回逻辑宽度：引擎用它做居中/右对齐 */
+    return (int)((float)pen / sc + 0.5f);
 }
 
 int DrawTextW(HDC hdc, const wchar_t *s, int n, RECT *rc, UINT fmt)
 {
     struct PlatDC *dc = hdc;
+    float lx, ltop;
     (void)fmt;
     if (!dc) return 0;
-    dc->curX = rc ? rc->left : 0;
-    dc->curY = rc ? rc->top + dc->fontPx : 0;
+    lx = rc ? (float)rc->left : 0.0f;
+    ltop = rc ? (float)rc->top : 0.0f;
+    /* ★ curX/curY 统一存**设备**坐标，并让 curY 落在**基线**上
+       （= 文本框顶 + fontPx，和之前一致，只是多过一道世界变换）。
+       这是本次必须修的：以前直接存逻辑坐标，于是文字画在**逻辑位置**、
+       只有一半大小 —— 而卡片底板那些 fillRound 是过变换的，
+       两者混在一起看起来就是"底板对了、字全没了"。 */
+    dc->curX = (int)xfX(dc, lx, ltop);
+    dc->curY = (int)xfY(dc, lx, ltop + (float)dc->fontPx);
     return drawTextCore(dc, s, n);
 }
 
 BOOL GetTextExtentPoint32W(HDC hdc, const wchar_t *s, int n, SIZE *sz)
 {
     struct PlatDC *dc = hdc;
-    int i, w = 0, mx = 0;
+    int i, pen = 0;
+    float sc;
+    int devPx;
     if (!dc || !sz) return FALSE;
+    /* 同样要认 n < 0 = NUL 结尾（与 drawTextCore 保持一致） */
+    if (n < 0) n = (int)wcslen(s);
+    sc = dcDeviceScale(dc);
+    devPx = (int)((float)dc->fontPx * sc + 0.5f);
+    if (devPx < 1) devPx = 1;
     for (i = 0; i < n && s[i]; i++) {
         int cp = (int)(unsigned short)s[i];
-        Glyph *g = glyphFind(cp, dc->fontPx, dc->fontBold);
-        if (g) w += g->adv ? g->adv : g->w;
-        else    w += (cp > 0x2E80) ? dc->fontPx : (dc->fontPx / 2);
-        if (w > mx) mx = w;
+        int adv;
+        Glyph *g = glyphFind(cp, devPx, dc->fontBold);
+        if (g) {
+            adv = g->adv ? g->adv : g->w;
+        } else {
+            adv = (cp > 0x2E80) ? devPx : (devPx / 2);
+            /* ★ 这里也登记请求：引擎排版前一定会先量宽度（putText 里就是），
+               所以"第一次量"就能把外壳要光栅化的字符表交给它，
+               不用等真正画的时候。 */
+            glyphRequest(cp, devPx, dc->fontBold);
+        }
+        pen += adv;
     }
-    sz->cx = w;
-    sz->cy = dc->fontPx;
+    sz->cx = (int)((float)pen / sc + 0.5f);    /* 逻辑宽度 */
+    sz->cy = dc->fontPx;                        /* 逻辑行高 */
     return TRUE;
 }
 

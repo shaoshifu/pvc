@@ -122,6 +122,21 @@ jobs:
               -o /tmp/test_wprintf _test_web_printf.c plat_web.c -lm
           /tmp/test_wprintf
 
+      - name: 文字（字形注入）端到端测试
+        run: |
+          # ★ 这一步护的是「文字有没有被画到画面上」。
+          #   2026-09-15 线上出现"素材 853 张全载入、0 个 JS 异常，
+          #   但整屏一个字都没有" —— 根因是 putText() 用 n=-1 表示"按 NUL 结尾"
+          #   （Win32 约定），而 drawTextCore 把 n 当计数用，`0 < -1` 恒假，
+          #   循环体一次都不执行。不报错、不告警，只是什么都没画。
+          #
+          #   ⚠️ 这条**必须在 Linux 上也跑**：它验证的是 C 侧贴图路径，
+          #      与 libc 无关，两个平台都该过。在本地跑是快速反馈，
+          #      在 CI 跑是防止回归被漏掉。
+          gcc -DPLAT_PORTABLE -O2 -Wall -Wextra -I. \
+              -o /tmp/test_wglyph _test_web_glyph.c plat_web.c pvz.c -lm
+          /tmp/test_wglyph
+
       - name: 安装 Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
@@ -179,7 +194,11 @@ jobs:
             -sFORCE_FILESYSTEM=1 \
             -sINITIAL_MEMORY=67108864 \
             -sSTACK_SIZE=5242880 \
-            -sEXPORTED_FUNCTIONS='["_gameInitAll","_gameStep","_gamePointerMove","_gamePointerDown","_gamePointerUp","_handleKey","_gameArtCount","_platWebFrame","_platWebInit","_gameSetAssetDir","_gameSetDeterministic","_malloc","_free"]' \
+            -sEXPORTED_FUNCTIONS='["_gameInitAll","_gameStep","_gamePointerMove","_gamePointerDown","_gamePointerUp","_handleKey","_gameArtCount","_platWebFrame","_platWebInit","_gameSetAssetDir","_gameSetDeterministic",
+            # ★ 文字：外壳必须能调这两个 —— 字形由 JS 光栅化后回灌，
+            #   没导出的话文字会一个都不显示，且**不报任何错**。
+            "_platWebGlyph","_platWebGlyphReq","_platWebGlyphCount","_platWebGlyphReqCount",
+            "_malloc","_free"]' \
             -sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","FS","HEAPU32","HEAPU8","HEAPF32"]' \
             --preload-file assets@/assets \
             --no-entry \
