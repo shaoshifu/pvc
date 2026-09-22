@@ -1,0 +1,15 @@
+{
+  "name": "PvZ C · 网页版 (WASM)",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web-server",
+      "command": "cd web && python3 -m http.server 8000",
+      "description": "Serves the built web game (index.html + pvz.js/wasm/data) at http://localhost:8000/index.html"
+    }
+  ],
+  "ports": [
+    { "name": "web", "port": 8000 }
+  ]
+}
